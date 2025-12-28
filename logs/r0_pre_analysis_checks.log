@@ -1,0 +1,1391 @@
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+      name:  <unnamed>
+       log:  C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/logs/r0_pre_analysis_checks.log
+  log type:  text
+ opened on:  28 Dec 2025, 16:36:53
+
+. 
+. *===============================================================================
+. * 0. Install Required Packages
+. *===============================================================================
+. cap which reghdfe
+
+. if _rc ssc install reghdfe, replace
+
+. 
+. cap which eststo
+
+. if _rc ssc install estout, replace
+
+. 
+. cap which esttab
+
+. if _rc ssc install estout, replace
+
+. 
+. cap which balancetable
+
+. if _rc ssc install balancetable, replace
+
+. 
+. cap which coefplot
+
+. if _rc ssc install coefplot, replace
+
+. 
+. *===============================================================================
+. * 1. Load and Prepare Data
+. *===============================================================================
+. use "$dta/panel_analysis.dta", clear
+
+. 
+. * Verify required variables
+. local required_vars nuts2016 year emprate unemprate treated post ln_esf_pc ///
+>                     ln_gdp_pc rel_year sample_main esf_pc_base in_base
+
+. 
+. foreach v of local required_vars {
+  2.     cap confirm variable `v'
+  3.     if _rc {
+  4.         di as error "Required variable '`v'' not found."
+  5.         error 111
+  6.     }
+  7. }
+
+. 
+. * Create country identifier
+. gen str2 country = substr(nuts2016, 1, 2)
+
+. label var country "Country (ISO2)"
+
+. 
+. * Country-by-year fixed effects
+. egen long cy = group(country year)
+
+. label var cy "Country-by-year FE"
+
+. 
+. * Restrict to main sample
+. keep if sample_main == 1
+(45 observations deleted)
+
+. 
+. di as result "Pre-analysis checks starting with `=_N' observations"
+Pre-analysis checks starting with 1629 observations
+
+. unique nuts2016
+Number of unique values of nuts2016 is  181
+Number of records is  1629
+
+. di as text "Number of regions: `r(unique)'"
+Number of regions: 181
+
+. 
+. *===============================================================================
+. * 2. Balance Table: Baseline Characteristics by Treatment Status
+. *===============================================================================
+. di as result _newline "===== BALANCE CHECKS ====="
+
+===== BALANCE CHECKS =====
+
+. 
+. * Calculate baseline means for key variables
+. foreach var in emprate unemprate gdp_pc esf_pc pop {
+  2.     bysort nuts2016: egen `var'_baseline = mean(cond(in_base == 1, `var', .))
+  3.     label var `var'_baseline "Baseline mean: `var'"
+  4. }
+
+. 
+. * Keep one observation per region for balance table
+. preserve
+
+. keep nuts2016 treated *_baseline country
+
+. duplicates drop nuts2016, force
+
+Duplicates in terms of nuts2016
+
+(1,448 observations deleted)
+
+. 
+. * Balance table
+. eststo clear
+
+. 
+. * Manual balance table with t-tests
+. local baseline_vars emprate_baseline unemprate_baseline gdp_pc_baseline ///
+>                     esf_pc_baseline pop_baseline
+
+. 
+. foreach var of local baseline_vars {
+  2.     * Summary statistics by treatment group
+.     qui summ `var' if treated == 0
+  3.     local mean_control = r(mean)
+  4.     local sd_control = r(sd)
+  5.     local n_control = r(N)
+  6.     
+.     qui summ `var' if treated == 1
+  7.     local mean_treated = r(mean)
+  8.     local sd_treated = r(sd)
+  9.     local n_treated = r(N)
+ 10.     
+.     * T-test for difference
+.     qui ttest `var', by(treated)
+ 11.     local diff = `mean_treated' - `mean_control'
+ 12.     local pval = r(p)
+ 13.     local tstat = r(t)
+ 14.     
+.     di as text "`var':"
+ 15.     di as text "  Control:  " %8.3f `mean_control' " (SD: " %8.3f `sd_control' ", N=" `n_control' ")"
+ 16.     di as text "  Treated:  " %8.3f `mean_treated' " (SD: " %8.3f `sd_treated' ", N=" `n_treated' ")"
+ 17.     di as text "  Diff:     " %8.3f `diff' " (t=" %6.3f `tstat' ", p=" %6.4f `pval' ")"
+ 18.     di as text ""
+ 19. }
+emprate_baseline:
+  Control:    32.270 (SD:    0.467, N=2)
+  Treated:    34.051 (SD:   15.029, N=179)
+  Diff:        1.781 (t=-0.167, p=0.8674)
+
+unemprate_baseline:
+  Control:    11.560 (SD:    1.556, N=2)
+  Treated:    13.442 (SD:   10.333, N=179)
+  Diff:        1.882 (t=-0.257, p=0.7976)
+
+gdp_pc_baseline:
+  Control:     0.020 (SD:    0.005, N=2)
+  Treated:     0.029 (SD:    0.015, N=179)
+  Diff:        0.009 (t=-0.844, p=0.4000)
+
+esf_pc_baseline:
+  Control:    21.191 (SD:    5.325, N=2)
+  Treated:    20.153 (SD:   27.131, N=179)
+  Diff:       -1.038 (t= 0.054, p=0.9570)
+
+pop_baseline:
+  Control:   1.0e+06 (SD:  8.2e+04, N=2)
+  Treated:   1.9e+06 (SD:  1.7e+06, N=179)
+  Diff:      8.6e+05 (t=-0.707, p=0.4804)
+
+
+. 
+. * Create formatted balance table
+. estpost ttest emprate_baseline unemprate_baseline gdp_pc_baseline ///
+>               esf_pc_baseline pop_baseline, by(treated)
+
+             |      e(b)   e(count)      e(se)       e(t)    e(df_t)     e(p_l)       e(p)     e(p_u)     e(N_1)    e(mu_1)     e(N_2)    e(mu_2) 
+-------------+------------------------------------------------------------------------------------------------------------------------------------
+emprate_ba~e | -1.781397        181   10.65619  -.1671702        179   .4337124   .8674248   .5662876          2      32.27        179    34.0514 
+unemprate_~e | -1.882235        181   7.327437  -.2568749        179   .3987852   .7975704   .6012148          2      11.56        179   13.44223 
+gdp_pc_bas~e | -.0087353        181   .0103538  -.8436816        179   .1999867   .3999734   .8000133          2   .0199227        179    .028658 
+esf_pc_bas~e |  1.038011        181   19.23953    .053952        179   .5214832   .9570336   .4785168          2   21.19137        179   20.15336 
+pop_baseline | -857450.9        181    1212640  -.7070944        179   .2402137   .4804274   .7597863          2    1034074        179    1891525 
+
+. 
+. esttab using "$tabs/balance_table.rtf", replace ///
+>     title("Balance Table: Baseline Characteristics by Treatment Status") ///
+>     cells("mu_1(fmt(%9.2f) label(Control Mean)) mu_2(fmt(%9.2f) label(Treated Mean)) b(fmt(%9.2f) star label(Difference)) p(fmt(%9.3f) label(P-value))") ///
+>     label ///
+>     noobs nonumber ///
+>     addnotes("Baseline period averages by treatment group." ///
+>              "Treatment defined as above-median baseline ESF per capita." ///
+>              "*** p<0.01, ** p<0.05, * p<0.1")
+(output written to C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/out/tables/balance_table.rtf)
+
+. 
+. di as result "Saved: $tabs/balance_table.rtf"
+Saved: C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/out/tables/balance_table.rtf
+
+. 
+. * Visual balance check - distribution plots
+. foreach var in emprate_baseline unemprate_baseline gdp_pc_baseline {
+  2.     twoway (kdensity `var' if treated == 0, lcolor(navy) lwidth(medium)) ///
+>            (kdensity `var' if treated == 1, lcolor(cranberry) lpattern(dash) lwidth(medium)), ///
+>         title("Distribution of `var'", size(medium)) ///
+>         subtitle("By Treatment Status", size(small)) ///
+>         legend(label(1 "Control") label(2 "Treated") position(6) rows(1)) ///
+>         xtitle("`var'", size(small)) ///
+>         ytitle("Density", size(small)) ///
+>         graphregion(color(white))
+  3.     
+.     local clean_name = subinstr("`var'", "_baseline", "", .)
+  4.     graph export "$figs/balance_dist_`clean_name'.png", replace width(2400)
+  5. }
+file C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/out/figs/balance_dist_emprate.png saved as PNG format
+file C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/out/figs/balance_dist_unemprate.png saved as PNG format
+file C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/out/figs/balance_dist_gdp_pc.png saved as PNG format
+
+. 
+. di as result "Saved balance distribution plots to $figs/"
+Saved balance distribution plots to C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/out/figs/
+
+. 
+. restore
+
+. 
+. *===============================================================================
+. * 3. Parallel Trends: Visual Inspection
+. *===============================================================================
+. di as result _newline "===== PARALLEL TRENDS: VISUAL INSPECTION ====="
+
+===== PARALLEL TRENDS: VISUAL INSPECTION =====
+
+. 
+. * Calculate mean outcomes by treatment group and year
+. preserve
+
+. 
+. collapse (mean) emprate unemprate gdp_pc, by(treated year)
+
+. 
+. * Employment rate trends
+. twoway (connected emprate year if treated == 0, lcolor(navy) mcolor(navy) msymbol(circle)) ///
+>        (connected emprate year if treated == 1, lcolor(cranberry) mcolor(cranberry) msymbol(square) lpattern(dash)), ///
+>     title("Pre-Treatment Trends: Employment Rate", size(medium)) ///
+>     subtitle("By Treatment Group", size(small)) ///
+>     legend(label(1 "Control (Low ESF)") label(2 "Treated (High ESF)") position(6) rows(1)) ///
+>     xtitle("Year", size(small)) ///
+>     ytitle("Employment Rate (%)", size(small)) ///
+>     graphregion(color(white)) ///
+>     ylabel(, angle(0) format(%9.1f))
+
+. 
+. graph export "$figs/parallel_trends_employment_visual.png", replace width(2400)
+file C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/out/figs/parallel_trends_employment_visual.png saved as PNG format
+
+. di as result "Saved: $figs/parallel_trends_employment_visual.png"
+Saved: C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/out/figs/parallel_trends_employment_visual.png
+
+. 
+. * Unemployment rate trends
+. twoway (connected unemprate year if treated == 0, lcolor(navy) mcolor(navy) msymbol(circle)) ///
+>        (connected unemprate year if treated == 1, lcolor(cranberry) mcolor(cranberry) msymbol(square) lpattern(dash)), ///
+>     title("Pre-Treatment Trends: Unemployment Rate", size(medium)) ///
+>     subtitle("By Treatment Group", size(small)) ///
+>     legend(label(1 "Control (Low ESF)") label(2 "Treated (High ESF)") position(6) rows(1)) ///
+>     xtitle("Year", size(small)) ///
+>     ytitle("Unemployment Rate (%)", size(small)) ///
+>     graphregion(color(white)) ///
+>     ylabel(, angle(0) format(%9.1f))
+
+. 
+. graph export "$figs/parallel_trends_unemployment_visual.png", replace width(2400)
+file C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/out/figs/parallel_trends_unemployment_visual.png saved as PNG format
+
+. di as result "Saved: $figs/parallel_trends_unemployment_visual.png"
+Saved: C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/out/figs/parallel_trends_unemployment_visual.png
+
+. 
+. restore
+
+. 
+. *===============================================================================
+. * 4. Parallel Trends: Formal Pre-Treatment Test
+. *===============================================================================
+. di as result _newline "===== PARALLEL TRENDS: FORMAL TESTS ====="
+
+===== PARALLEL TRENDS: FORMAL TESTS =====
+
+. 
+. * Event-study window configuration
+. local L = 5  // leads (pre-treatment periods)
+
+. local K = 5  // lags (post-treatment periods)
+
+. local ref = -1  // reference period
+
+. 
+. * Define pre-treatment sample (only pre-treatment observations)
+. gen byte pretreat_sample = (treated == 1 & !missing(rel_year) & rel_year < 0)
+
+. label var pretreat_sample "Pre-treatment sample for trends test"
+
+. 
+. * Build pre-treatment dummies only (leads)
+. local pretreat_dummies ""
+
+. forvalues j = `L'(-1)1 {
+  2.     if `j' == abs(`ref') continue  // skip reference period
+  3.     
+.     local nm = "Dm" + string(`j')
+  4.     cap drop `nm'
+  5.     gen byte `nm' = (rel_year == -`j') if (treated == 1 & !missing(rel_year))
+  6.     label var `nm' "Event-time dummy: t = -`j'"
+  7.     
+.     local pretreat_dummies "`pretreat_dummies' `nm'"
+  8. }
+(18 missing values generated)
+(18 missing values generated)
+(18 missing values generated)
+(18 missing values generated)
+
+. 
+. di as text "Pre-treatment dummies: `pretreat_dummies'"
+Pre-treatment dummies:  Dm5 Dm4 Dm3 Dm2
+
+. 
+. * Test 1: Joint F-test that all pre-treatment coefficients = 0
+. eststo clear
+
+. 
+. * Employment rate
+. preserve
+
+. keep if treated == 1 & !missing(rel_year)
+(18 observations deleted)
+
+. reghdfe emprate `pretreat_dummies' ln_gdp_pc if rel_year < 0, ///
+>     absorb(nuts2016 cy) vce(cluster nuts2016)
+(dropped 26 singleton observations)
+(MWFE estimator converged in 9 iterations)
+note: Dm2 omitted because of collinearity
+
+HDFE Linear regression                            Number of obs   =        315
+Absorbing 2 HDFE groups                           F(   4,    115) =       2.29
+Statistics robust to heteroskedasticity           Prob > F        =     0.0635
+                                                  R-squared       =     0.9951
+                                                  Adj R-squared   =     0.9902
+                                                  Within R-sq.    =     0.0349
+Number of clusters (nuts2016) =        116        Root MSE        =     1.3578
+
+                             (Std. err. adjusted for 116 clusters in nuts2016)
+------------------------------------------------------------------------------
+             |               Robust
+     emprate | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+         Dm5 |   1.104126   .9570892     1.15   0.251    -.7916834    2.999936
+         Dm4 |   .5357124   .8133446     0.66   0.511    -1.075367    2.146792
+         Dm3 |  -.0468149   .4186653    -0.11   0.911    -.8761103    .7824806
+         Dm2 |          0  (omitted)
+   ln_gdp_pc |  -17.89511   6.713999    -2.67   0.009    -31.19425    -4.59597
+       _cons |   -33.6482   25.06285    -1.34   0.182    -83.29288    15.99648
+------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+-----------------------------------------------------+
+ Absorbed FE | Categories  - Redundant  = Num. Coefs |
+-------------+---------------------------------------|
+    nuts2016 |       116         116           0    *|
+          cy |        39           1          38     |
+-----------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. eststo pretrend_emp
+
+. 
+. * Joint F-test for all pre-treatment coefficients
+. qui test `pretreat_dummies'
+
+. scalar fstat_emp = r(F)
+
+. scalar pval_emp = r(p)
+
+. 
+. di as result _newline "Pre-trends test (Employment Rate):"
+
+Pre-trends test (Employment Rate):
+
+. di as text "  F-statistic: " %8.3f fstat_emp
+  F-statistic:    1.066
+
+. di as text "  P-value:     " %8.4f pval_emp
+  P-value:       0.3663
+
+. if pval_emp < 0.05 {
+.     di as error "  WARNING: Reject parallel trends assumption at 5% level"
+. }
+
+. else {
+.     di as result "  PASS: Cannot reject parallel trends"
+  PASS: Cannot reject parallel trends
+. }
+
+. restore
+
+. 
+. * Unemployment rate
+. preserve
+
+. keep if treated == 1 & !missing(rel_year)
+(18 observations deleted)
+
+. reghdfe unemprate `pretreat_dummies' ln_gdp_pc if rel_year < 0, ///
+>     absorb(nuts2016 cy) vce(cluster nuts2016)
+(dropped 26 singleton observations)
+(MWFE estimator converged in 9 iterations)
+note: Dm2 omitted because of collinearity
+
+HDFE Linear regression                            Number of obs   =        315
+Absorbing 2 HDFE groups                           F(   4,    115) =       0.78
+Statistics robust to heteroskedasticity           Prob > F        =     0.5394
+                                                  R-squared       =     0.9907
+                                                  Adj R-squared   =     0.9815
+                                                  Within R-sq.    =     0.0134
+Number of clusters (nuts2016) =        116        Root MSE        =     1.5351
+
+                             (Std. err. adjusted for 116 clusters in nuts2016)
+------------------------------------------------------------------------------
+             |               Robust
+   unemprate | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+         Dm5 |  -.2285596    1.22254    -0.19   0.852    -2.650176    2.193057
+         Dm4 |   .1136103   .9375819     0.12   0.904    -1.743559     1.97078
+         Dm3 |   .1098382   .5012792     0.22   0.827    -.8830995    1.102776
+         Dm2 |          0  (omitted)
+   ln_gdp_pc |   13.39702   9.351211     1.43   0.155    -5.125932    31.91997
+       _cons |   64.45281   34.91376     1.85   0.067    -4.704641    133.6103
+------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+-----------------------------------------------------+
+ Absorbed FE | Categories  - Redundant  = Num. Coefs |
+-------------+---------------------------------------|
+    nuts2016 |       116         116           0    *|
+          cy |        39           1          38     |
+-----------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. eststo pretrend_unemp
+
+. 
+. * Joint F-test
+. qui test `pretreat_dummies'
+
+. scalar fstat_unemp = r(F)
+
+. scalar pval_unemp = r(p)
+
+. 
+. di as result _newline "Pre-trends test (Unemployment Rate):"
+
+Pre-trends test (Unemployment Rate):
+
+. di as text "  F-statistic: " %8.3f fstat_unemp
+  F-statistic:    0.162
+
+. di as text "  P-value:     " %8.4f pval_unemp
+  P-value:       0.9215
+
+. if pval_unemp < 0.05 {
+.     di as error "  WARNING: Reject parallel trends assumption at 5% level"
+. }
+
+. else {
+.     di as result "  PASS: Cannot reject parallel trends"
+  PASS: Cannot reject parallel trends
+. }
+
+. restore
+
+. 
+. * Export pre-trends test results
+. esttab pretrend_emp pretrend_unemp using "$tabs/pretrends_test.rtf", replace ///
+>     title("Parallel Trends Test: Pre-Treatment Event-Study Coefficients") ///
+>     mtitles("Employment" "Unemployment") ///
+>     se star(* 0.10 ** 0.05 *** 0.01) ///
+>     b(%9.3f) se(%9.3f) ///
+>     stats(N r2_a F_test p_value, ///
+>           fmt(%9.0fc %9.3f %9.3f %9.4f) ///
+>           labels("Observations" "Adj. R²" "Joint F-stat" "P-value")) ///
+>     scalars("F_test F-statistic from joint test of pre-treatment coefficients" ///
+>             "p_value P-value of joint test") ///
+>     keep(`pretreat_dummies' ln_gdp_pc) ///
+>     addnotes("Sample restricted to treated regions in pre-treatment period only." ///
+>              "All models include region FE and country-by-year FE." ///
+>              "Standard errors clustered by region." ///
+>              "Joint F-test: H0 = all pre-treatment coefficients equal zero." ///
+>              "*** p<0.01, ** p<0.05, * p<0.1")
+(output written to C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/out/tables/pretrends_test.rtf)
+
+. 
+. di as result "Saved: $tabs/pretrends_test.rtf"
+Saved: C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/out/tables/pretrends_test.rtf
+
+. 
+. * Visual plot of pre-treatment coefficients
+. estimates restore pretrend_emp
+(results pretrend_emp are active now)
+
+. 
+. coefplot, ///
+>     keep(`pretreat_dummies') ///
+>     vertical ///
+>     yline(0, lcolor(red) lpattern(dash)) ///
+>     title("Pre-Treatment Coefficients: Employment Rate", size(medium)) ///
+>     subtitle("Joint F-test: p = " + string(pval_emp, "%9.4f"), size(small)) ///
+>     xtitle("Years Before Treatment", size(small)) ///
+>     ytitle("Coefficient", size(small)) ///
+>     coeflabels(Dm5="-5" Dm4="-4" Dm3="-3" Dm2="-2") ///
+>     graphregion(color(white)) ///
+>     ciopts(recast(rcap) lcolor(navy))
+
+. 
+. graph export "$figs/pretrends_coef_employment.png", replace width(2400)
+file C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/out/figs/pretrends_coef_employment.png saved as PNG format
+
+. di as result "Saved: $figs/pretrends_coef_employment.png"
+Saved: C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/out/figs/pretrends_coef_employment.png
+
+. 
+. *===============================================================================
+. * 5. Placebo Test: Artificial Treatment Timing
+. *===============================================================================
+. di as result _newline "===== PLACEBO TEST: ARTIFICIAL TREATMENT ====="
+
+===== PLACEBO TEST: ARTIFICIAL TREATMENT =====
+
+. 
+. * Strategy: Among treated units, artificially move event year earlier
+. * If we find effects before actual treatment, parallel trends violated
+. 
+. preserve
+
+. 
+. * Keep only treated regions with defined events
+. keep if treated == 1 & !missing(event_year)
+(18 observations deleted)
+
+. 
+. * Create artificial event year (move 3 years earlier)
+. gen event_year_placebo = event_year - 3
+
+. gen rel_year_placebo = year - event_year_placebo
+
+. 
+. * Keep only periods before actual treatment
+. keep if year < event_year
+(1,270 observations deleted)
+
+. 
+. * Create placebo post indicator
+. gen byte post_placebo = (year >= event_year_placebo)
+
+. 
+. * Run placebo regressions
+. reghdfe emprate post_placebo ln_gdp_pc if rel_year_placebo >= -5, ///
+>     absorb(nuts2016 cy) vce(cluster nuts2016)
+(dropped 26 singleton observations)
+(MWFE estimator converged in 8 iterations)
+
+HDFE Linear regression                            Number of obs   =        315
+Absorbing 2 HDFE groups                           F(   2,    115) =       4.04
+Statistics robust to heteroskedasticity           Prob > F        =     0.0201
+                                                  R-squared       =     0.9951
+                                                  Adj R-squared   =     0.9903
+                                                  Within R-sq.    =     0.0330
+Number of clusters (nuts2016) =        116        Root MSE        =     1.3505
+
+                             (Std. err. adjusted for 116 clusters in nuts2016)
+------------------------------------------------------------------------------
+             |               Robust
+     emprate | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+post_placebo |  -.6566896   .4942208    -1.33   0.187    -1.635646    .3222666
+   ln_gdp_pc |  -17.55377   6.531228    -2.69   0.008    -30.49088   -4.616669
+       _cons |  -31.73085   24.27864    -1.31   0.194    -79.82216    16.36046
+------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+-----------------------------------------------------+
+ Absorbed FE | Categories  - Redundant  = Num. Coefs |
+-------------+---------------------------------------|
+    nuts2016 |       116         116           0    *|
+          cy |        39           1          38     |
+-----------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. eststo placebo_emp
+
+. 
+. local coef_placebo_emp = _b[post_placebo]
+
+. local se_placebo_emp = _se[post_placebo]
+
+. local p_placebo_emp = 2 * ttail(e(df_r), abs(_b[post_placebo]/_se[post_placebo]))
+
+. 
+. reghdfe unemprate post_placebo ln_gdp_pc if rel_year_placebo >= -5, ///
+>     absorb(nuts2016 cy) vce(cluster nuts2016)
+(dropped 26 singleton observations)
+(MWFE estimator converged in 8 iterations)
+
+HDFE Linear regression                            Number of obs   =        315
+Absorbing 2 HDFE groups                           F(   2,    115) =       1.42
+Statistics robust to heteroskedasticity           Prob > F        =     0.2450
+                                                  R-squared       =     0.9907
+                                                  Adj R-squared   =     0.9817
+                                                  Within R-sq.    =     0.0126
+Number of clusters (nuts2016) =        116        Root MSE        =     1.5260
+
+                             (Std. err. adjusted for 116 clusters in nuts2016)
+------------------------------------------------------------------------------
+             |               Robust
+   unemprate | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+post_placebo |   .0659859   .6387155     0.10   0.918    -1.199187    1.331158
+   ln_gdp_pc |   13.28311   9.026071     1.47   0.144    -4.595798    31.16202
+       _cons |   63.99282   33.32385     1.92   0.057    -2.015301    130.0009
+------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+-----------------------------------------------------+
+ Absorbed FE | Categories  - Redundant  = Num. Coefs |
+-------------+---------------------------------------|
+    nuts2016 |       116         116           0    *|
+          cy |        39           1          38     |
+-----------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. eststo placebo_unemp
+
+. 
+. local coef_placebo_unemp = _b[post_placebo]
+
+. local se_placebo_unemp = _se[post_placebo]
+
+. local p_placebo_unemp = 2 * ttail(e(df_r), abs(_b[post_placebo]/_se[post_placebo]))
+
+. 
+. di as result _newline "Placebo Test Results:"
+
+Placebo Test Results:
+
+. di as text "Employment Rate:"
+Employment Rate:
+
+. di as text "  Placebo coefficient: " %8.4f `coef_placebo_emp' " (SE: " %8.4f `se_placebo_emp' ")"
+  Placebo coefficient:  -0.6567 (SE:   0.4942)
+
+. di as text "  P-value:            " %8.4f `p_placebo_emp'
+  P-value:              0.1866
+
+. if `p_placebo_emp' < 0.05 {
+.     di as error "  WARNING: Significant placebo effect detected"
+. }
+
+. else {
+.     di as result "  PASS: No significant placebo effect"
+  PASS: No significant placebo effect
+. }
+
+. 
+. di as text _newline "Unemployment Rate:"
+
+Unemployment Rate:
+
+. di as text "  Placebo coefficient: " %8.4f `coef_placebo_unemp' " (SE: " %8.4f `se_placebo_unemp' ")"
+  Placebo coefficient:   0.0660 (SE:   0.6387)
+
+. di as text "  P-value:            " %8.4f `p_placebo_unemp'
+  P-value:              0.9179
+
+. if `p_placebo_unemp' < 0.05 {
+.     di as error "  WARNING: Significant placebo effect detected"
+. }
+
+. else {
+.     di as result "  PASS: No significant placebo effect"
+  PASS: No significant placebo effect
+. }
+
+. 
+. * Export placebo results
+. esttab placebo_emp placebo_unemp using "$tabs/placebo_test.rtf", replace ///
+>     title("Placebo Test: Artificial Treatment 3 Years Before Actual Event") ///
+>     mtitles("Employment" "Unemployment") ///
+>     se star(* 0.10 ** 0.05 *** 0.01) ///
+>     b(%9.3f) se(%9.3f) ///
+>     stats(N r2_a, fmt(%9.0fc %9.3f) labels("Observations" "Adj. R²")) ///
+>     keep(post_placebo ln_gdp_pc) ///
+>     addnotes("Sample: Treated regions, years before actual treatment only." ///
+>              "Placebo event set 3 years before actual event." ///
+>              "If parallel trends hold, placebo post should be insignificant." ///
+>              "All models include region FE and country-by-year FE." ///
+>              "Standard errors clustered by region." ///
+>              "*** p<0.01, ** p<0.05, * p<0.1")
+(output written to C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/out/tables/placebo_test.rtf)
+
+. 
+. di as result "Saved: $tabs/placebo_test.rtf"
+Saved: C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/out/tables/placebo_test.rtf
+
+. 
+. restore
+
+. 
+. *===============================================================================
+. * 6. Heterogeneity Analysis: By Baseline Characteristics
+. *===============================================================================
+. di as result _newline "===== HETEROGENEITY ANALYSIS ====="
+
+===== HETEROGENEITY ANALYSIS =====
+
+. 
+. * Create baseline characteristic indicators
+. * (a) High vs Low baseline GDP per capita
+. preserve
+
+. keep nuts2016 gdp_pc_baseline
+
+. duplicates drop
+
+Duplicates in terms of all variables
+
+(1,448 observations deleted)
+
+. summ gdp_pc_baseline, detail
+
+                    Baseline mean: gdp_pc
+-------------------------------------------------------------
+      Percentiles      Smallest
+ 1%     .0050266       .0044884
+ 5%     .0078752       .0050266
+10%     .0097873       .0050754       Obs                 181
+25%     .0168916       .0055179       Sum of wgt.         181
+
+50%     .0294615                      Mean           .0285615
+                        Largest       Std. dev.      .0145497
+75%     .0374007       .0634635
+90%     .0445626        .063699       Variance       .0002117
+95%     .0500369        .066847       Skewness       .6717953
+99%      .066847       .0951349       Kurtosis       4.445206
+
+. local gdp_med = r(p50)
+
+. gen byte high_gdp = (gdp_pc_baseline >= `gdp_med')
+
+. tempfile gdp_split
+
+. save `gdp_split'
+file C:\Users\LOCAL_~1\Temp\6\ST_25d4_000007.tmp saved as .dta format
+
+. restore
+
+. 
+. merge m:1 nuts2016 using `gdp_split', nogen keep(master match)
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                             0
+    Matched                             1,629  
+    -----------------------------------------
+
+. label var high_gdp "=1 if baseline GDP pc >= median"
+
+. 
+. * (b) High vs Low baseline unemployment
+. preserve
+
+. keep nuts2016 unemprate_baseline
+
+. duplicates drop
+
+Duplicates in terms of all variables
+
+(1,448 observations deleted)
+
+. summ unemprate_baseline, detail
+
+                  Baseline mean: unemprate
+-------------------------------------------------------------
+      Percentiles      Smallest
+ 1%            0              0
+ 5%         3.92              0
+10%         4.62              0       Obs                 181
+25%          6.4             .9       Sum of wgt.         181
+
+50%         9.98                      Mean           13.42144
+                        Largest       Std. dev.      10.27838
+75%        17.26          45.02
+90%        26.72          47.64       Variance       105.6451
+95%        36.32          48.12       Skewness       1.593708
+99%        48.12          54.04       Kurtosis       5.443263
+
+. local unemp_med = r(p50)
+
+. gen byte high_unemp = (unemprate_baseline >= `unemp_med')
+
+. tempfile unemp_split
+
+. save `unemp_split'
+file C:\Users\LOCAL_~1\Temp\6\ST_25d4_000009.tmp saved as .dta format
+
+. restore
+
+. 
+. merge m:1 nuts2016 using `unemp_split', nogen keep(master match)
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                             0
+    Matched                             1,629  
+    -----------------------------------------
+
+. label var high_unemp "=1 if baseline unemployment >= median"
+
+. 
+. * Create treatment interactions
+. gen byte treated_post = treated * post if !missing(treated, post)
+(18 missing values generated)
+
+. gen byte treated_post_highgdp = treated_post * high_gdp
+(18 missing values generated)
+
+. gen byte treated_post_lowgdp = treated_post * (1 - high_gdp)
+(18 missing values generated)
+
+. gen byte treated_post_highunemp = treated_post * high_unemp
+(18 missing values generated)
+
+. gen byte treated_post_lowunemp = treated_post * (1 - high_unemp)
+(18 missing values generated)
+
+. 
+. label var treated_post_highgdp "Treated × Post × High GDP"
+
+. label var treated_post_lowgdp "Treated × Post × Low GDP"
+
+. label var treated_post_highunemp "Treated × Post × High Unemployment"
+
+. label var treated_post_lowunemp "Treated × Post × Low Unemployment"
+
+. 
+. * Heterogeneity regressions
+. eststo clear
+
+. 
+. * By baseline GDP
+. reghdfe emprate treated_post_highgdp treated_post_lowgdp ln_gdp_pc, ///
+>     absorb(nuts2016 cy) vce(cluster nuts2016)
+(dropped 63 singleton observations)
+(MWFE estimator converged in 2 iterations)
+
+HDFE Linear regression                            Number of obs   =      1,548
+Absorbing 2 HDFE groups                           F(   3,    171) =       2.62
+Statistics robust to heteroskedasticity           Prob > F        =     0.0528
+                                                  R-squared       =     0.9876
+                                                  Adj R-squared   =     0.9844
+                                                  Within R-sq.    =     0.0124
+Number of clusters (nuts2016) =        172        Root MSE        =     2.0277
+
+                                     (Std. err. adjusted for 172 clusters in nuts2016)
+--------------------------------------------------------------------------------------
+                     |               Robust
+             emprate | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+---------------------+----------------------------------------------------------------
+treated_post_highgdp |   .4245034   .3902266     1.09   0.278    -.3457781    1.194785
+ treated_post_lowgdp |   .7441063   .4564778     1.63   0.105    -.1569507    1.645163
+           ln_gdp_pc |   7.421375   3.702104     2.00   0.047     .1136651    14.72908
+               _cons |   61.16432   13.47157     4.54   0.000     34.57232    87.75632
+--------------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+-----------------------------------------------------+
+ Absorbed FE | Categories  - Redundant  = Num. Coefs |
+-------------+---------------------------------------|
+    nuts2016 |       172         172           0    *|
+          cy |       144           1         143     |
+-----------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. eststo hetero_gdp_emp
+
+. 
+. reghdfe unemprate treated_post_highgdp treated_post_lowgdp ln_gdp_pc, ///
+>     absorb(nuts2016 cy) vce(cluster nuts2016)
+(dropped 63 singleton observations)
+(MWFE estimator converged in 2 iterations)
+
+HDFE Linear regression                            Number of obs   =      1,548
+Absorbing 2 HDFE groups                           F(   3,    171) =       5.63
+Statistics robust to heteroskedasticity           Prob > F        =     0.0011
+                                                  R-squared       =     0.9605
+                                                  Adj R-squared   =     0.9503
+                                                  Within R-sq.    =     0.0193
+Number of clusters (nuts2016) =        172        Root MSE        =     2.3435
+
+                                     (Std. err. adjusted for 172 clusters in nuts2016)
+--------------------------------------------------------------------------------------
+                     |               Robust
+           unemprate | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+---------------------+----------------------------------------------------------------
+treated_post_highgdp |   1.718978   .4382795     3.92   0.000     .8538434    2.584113
+ treated_post_lowgdp |  -.0995192   .5335605    -0.19   0.852    -1.152732    .9536939
+           ln_gdp_pc |  -.8817123   3.325643    -0.27   0.791    -7.446311    5.682887
+               _cons |   8.349356   12.02647     0.69   0.488     -15.3901    32.08881
+--------------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+-----------------------------------------------------+
+ Absorbed FE | Categories  - Redundant  = Num. Coefs |
+-------------+---------------------------------------|
+    nuts2016 |       172         172           0    *|
+          cy |       144           1         143     |
+-----------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. eststo hetero_gdp_unemp
+
+. 
+. * Test equality of coefficients
+. qui test treated_post_highgdp = treated_post_lowgdp
+
+. local p_diff_gdp = r(p)
+
+. 
+. di as result _newline "Heterogeneity by Baseline GDP:"
+
+Heterogeneity by Baseline GDP:
+
+. di as text "  High GDP effect (Employment): " %8.4f _b[treated_post_highgdp]
+  High GDP effect (Employment):   1.7190
+
+. di as text "  Low GDP effect (Employment):  " %8.4f _b[treated_post_lowgdp]
+  Low GDP effect (Employment):   -0.0995
+
+. di as text "  Difference p-value:          " %8.4f `p_diff_gdp'
+  Difference p-value:            0.0043
+
+. 
+. * By baseline unemployment
+. reghdfe emprate treated_post_highunemp treated_post_lowunemp ln_gdp_pc, ///
+>     absorb(nuts2016 cy) vce(cluster nuts2016)
+(dropped 63 singleton observations)
+(MWFE estimator converged in 2 iterations)
+
+HDFE Linear regression                            Number of obs   =      1,548
+Absorbing 2 HDFE groups                           F(   3,    171) =       2.58
+Statistics robust to heteroskedasticity           Prob > F        =     0.0550
+                                                  R-squared       =     0.9876
+                                                  Adj R-squared   =     0.9844
+                                                  Within R-sq.    =     0.0121
+Number of clusters (nuts2016) =        172        Root MSE        =     2.0280
+
+                                       (Std. err. adjusted for 172 clusters in nuts2016)
+----------------------------------------------------------------------------------------
+                       |               Robust
+               emprate | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-----------------------+----------------------------------------------------------------
+treated_post_highunemp |   .6676074   .3731756     1.79   0.075    -.0690165    1.404231
+ treated_post_lowunemp |   .4641833    .374317     1.24   0.217    -.2746938     1.20306
+             ln_gdp_pc |   7.445219   3.744406     1.99   0.048     .0540085    14.83643
+                 _cons |   61.26595   13.63598     4.49   0.000     34.34942    88.18248
+----------------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+-----------------------------------------------------+
+ Absorbed FE | Categories  - Redundant  = Num. Coefs |
+-------------+---------------------------------------|
+    nuts2016 |       172         172           0    *|
+          cy |       144           1         143     |
+-----------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. eststo hetero_unemp_emp
+
+. 
+. reghdfe unemprate treated_post_highunemp treated_post_lowunemp ln_gdp_pc, ///
+>     absorb(nuts2016 cy) vce(cluster nuts2016)
+(dropped 63 singleton observations)
+(MWFE estimator converged in 2 iterations)
+
+HDFE Linear regression                            Number of obs   =      1,548
+Absorbing 2 HDFE groups                           F(   3,    171) =       5.82
+Statistics robust to heteroskedasticity           Prob > F        =     0.0008
+                                                  R-squared       =     0.9606
+                                                  Adj R-squared   =     0.9504
+                                                  Within R-sq.    =     0.0202
+Number of clusters (nuts2016) =        172        Root MSE        =     2.3424
+
+                                       (Std. err. adjusted for 172 clusters in nuts2016)
+----------------------------------------------------------------------------------------
+                       |               Robust
+             unemprate | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-----------------------+----------------------------------------------------------------
+treated_post_highunemp |   -.026614   .5583899    -0.05   0.962    -1.128839    1.075611
+ treated_post_lowunemp |   1.858068   .4614383     4.03   0.000     .9472194    2.768917
+             ln_gdp_pc |  -.7617804   3.229915    -0.24   0.814    -7.137419    5.613858
+                 _cons |    8.69366   11.67796     0.74   0.458    -14.35787    31.74519
+----------------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+-----------------------------------------------------+
+ Absorbed FE | Categories  - Redundant  = Num. Coefs |
+-------------+---------------------------------------|
+    nuts2016 |       172         172           0    *|
+          cy |       144           1         143     |
+-----------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. eststo hetero_unemp_unemp
+
+. 
+. * Test equality
+. qui test treated_post_highunemp = treated_post_lowunemp
+
+. local p_diff_unemp = r(p)
+
+. 
+. di as result _newline "Heterogeneity by Baseline Unemployment:"
+
+Heterogeneity by Baseline Unemployment:
+
+. di as text "  High Unemployment effect: " %8.4f _b[treated_post_highunemp]
+  High Unemployment effect:  -0.0266
+
+. di as text "  Low Unemployment effect:  " %8.4f _b[treated_post_lowunemp]
+  Low Unemployment effect:    1.8581
+
+. di as text "  Difference p-value:       " %8.4f `p_diff_unemp'
+  Difference p-value:         0.0052
+
+. 
+. * Export heterogeneity results
+. esttab hetero_gdp_emp hetero_gdp_unemp hetero_unemp_emp hetero_unemp_unemp ///
+>     using "$tabs/heterogeneity_analysis.rtf", replace ///
+>     title("Heterogeneous Treatment Effects by Baseline Characteristics") ///
+>     mtitles("Emp: GDP" "Unemp: GDP" "Emp: Unemp" "Unemp: Unemp") ///
+>     se star(* 0.10 ** 0.05 *** 0.01) ///
+>     b(%9.3f) se(%9.3f) ///
+>     stats(N r2_a, fmt(%9.0fc %9.3f) labels("Observations" "Adj. R²")) ///
+>     keep(treated_post_highgdp treated_post_lowgdp ///
+>          treated_post_highunemp treated_post_lowunemp ln_gdp_pc) ///
+>     addnotes("Columns (1-2): Heterogeneity by baseline GDP (above vs below median)." ///
+>              "Columns (3-4): Heterogeneity by baseline unemployment (above vs below median)." ///
+>              "All models include region FE and country-by-year FE." ///
+>              "Standard errors clustered by region." ///
+>              "*** p<0.01, ** p<0.05, * p<0.1")
+(output written to C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/out/tables/heterogeneity_analysis.rtf)
+
+. 
+. di as result "Saved: $tabs/heterogeneity_analysis.rtf"
+Saved: C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/out/tables/heterogeneity_analysis.rtf
+
+. 
+. *===============================================================================
+. * 7. Sample Composition and Descriptive Statistics
+. *===============================================================================
+. di as result _newline "===== SAMPLE COMPOSITION ====="
+
+===== SAMPLE COMPOSITION =====
+
+. 
+. * Regional composition by treatment status
+. preserve
+
+. keep nuts2016 treated country
+
+. duplicates drop
+
+Duplicates in terms of all variables
+
+(1,448 observations deleted)
+
+. 
+. di as text _newline "Treatment group composition by country:"
+
+Treatment group composition by country:
+
+. tab country treated, row
+
++----------------+
+| Key            |
+|----------------|
+|   frequency    |
+| row percentage |
++----------------+
+
+           |   =1 if region ever
+   Country | experiences ESF jump
+    (ISO2) |         0          1 |     Total
+-----------+----------------------+----------
+        AT |         0          9 |         9 
+           |      0.00     100.00 |    100.00 
+-----------+----------------------+----------
+        BE |         0         11 |        11 
+           |      0.00     100.00 |    100.00 
+-----------+----------------------+----------
+        BG |         0          6 |         6 
+           |      0.00     100.00 |    100.00 
+-----------+----------------------+----------
+        CY |         0          1 |         1 
+           |      0.00     100.00 |    100.00 
+-----------+----------------------+----------
+        CZ |         0          8 |         8 
+           |      0.00     100.00 |    100.00 
+-----------+----------------------+----------
+        DE |         0         38 |        38 
+           |      0.00     100.00 |    100.00 
+-----------+----------------------+----------
+        DK |         0          5 |         5 
+           |      0.00     100.00 |    100.00 
+-----------+----------------------+----------
+        EE |         0          1 |         1 
+           |      0.00     100.00 |    100.00 
+-----------+----------------------+----------
+        ES |         0         19 |        19 
+           |      0.00     100.00 |    100.00 
+-----------+----------------------+----------
+        FI |         0          5 |         5 
+           |      0.00     100.00 |    100.00 
+-----------+----------------------+----------
+        FR |         0          1 |         1 
+           |      0.00     100.00 |    100.00 
+-----------+----------------------+----------
+        HR |         0          1 |         1 
+           |      0.00     100.00 |    100.00 
+-----------+----------------------+----------
+        HU |         0          6 |         6 
+           |      0.00     100.00 |    100.00 
+-----------+----------------------+----------
+        IT |         0         21 |        21 
+           |      0.00     100.00 |    100.00 
+-----------+----------------------+----------
+        LU |         0          1 |         1 
+           |      0.00     100.00 |    100.00 
+-----------+----------------------+----------
+        LV |         0          1 |         1 
+           |      0.00     100.00 |    100.00 
+-----------+----------------------+----------
+        MT |         0          1 |         1 
+           |      0.00     100.00 |    100.00 
+-----------+----------------------+----------
+        NL |         0         10 |        10 
+           |      0.00     100.00 |    100.00 
+-----------+----------------------+----------
+        PL |         0         10 |        10 
+           |      0.00     100.00 |    100.00 
+-----------+----------------------+----------
+        PT |         0          4 |         4 
+           |      0.00     100.00 |    100.00 
+-----------+----------------------+----------
+        RO |         0          8 |         8 
+           |      0.00     100.00 |    100.00 
+-----------+----------------------+----------
+        SE |         0          8 |         8 
+           |      0.00     100.00 |    100.00 
+-----------+----------------------+----------
+        SI |         2          0 |         2 
+           |    100.00       0.00 |    100.00 
+-----------+----------------------+----------
+        SK |         0          4 |         4 
+           |      0.00     100.00 |    100.00 
+-----------+----------------------+----------
+     Total |         2        179 |       181 
+           |      1.10      98.90 |    100.00 
+
+. 
+. * Count regions by treatment status
+. tab treated, missing
+
+      =1 if |
+region ever |
+experiences |
+   ESF jump |      Freq.     Percent        Cum.
+------------+-----------------------------------
+          0 |          2        1.10        1.10
+          1 |        179       98.90      100.00
+------------+-----------------------------------
+      Total |        181      100.00
+
+. count if treated == 0
+  2
+
+. local n_control = r(N)
+
+. count if treated == 1
+  179
+
+. local n_treated = r(N)
+
+. 
+. di as result _newline "Treatment Group Counts:"
+
+Treatment Group Counts:
+
+. di as text "  Control regions (no ESF jump):  " `n_control'
+  Control regions (no ESF jump):  2
+
+. di as text "  Treated regions (ESF jump):     " `n_treated'
+  Treated regions (ESF jump):     179
+
+. di as text "  Total regions:                  " `=`n_control' + `n_treated''
+  Total regions:                  181
+
+. 
+. restore
+
+. 
+. * Time coverage
+. preserve
+
+. keep nuts2016 year
+
+. bysort nuts2016: gen n_years = _N
+
+. summ n_years, detail
+
+                           n_years
+-------------------------------------------------------------
+      Percentiles      Smallest
+ 1%            9              9
+ 5%            9              9
+10%            9              9       Obs               1,629
+25%            9              9       Sum of wgt.       1,629
+
+50%            9                      Mean                  9
+                        Largest       Std. dev.             0
+75%            9              9
+90%            9              9       Variance              0
+95%            9              9       Skewness              .
+99%            9              9       Kurtosis              .
+
+. 
+. di as result _newline "Time Coverage:"
+
+Time Coverage:
+
+. di as text "  Median years per region: " r(p50)
+  Median years per region: 9
+
+. di as text "  Min years per region:    " r(min)
+  Min years per region:    9
+
+. di as text "  Max years per region:    " r(max)
+  Max years per region:    9
+
+. di as text "  Mean years per region:   " %4.1f r(mean)
+  Mean years per region:    9.0
+
+. 
+. * Show distribution of panel length
+. di as text _newline "Distribution of panel length:"
+
+Distribution of panel length:
+
+. tab n_years
+
+    n_years |      Freq.     Percent        Cum.
+------------+-----------------------------------
+          9 |      1,629      100.00      100.00
+------------+-----------------------------------
+      Total |      1,629      100.00
+
+. 
+. restore
+
+. 
+. *===============================================================================
+. * 8. Summary of Diagnostic Results
+. *===============================================================================
+. di as result _newline "========================================="
+
+=========================================
+
+. di as result "PRE-ANALYSIS CHECKS SUMMARY"
+PRE-ANALYSIS CHECKS SUMMARY
+
+. di as result "========================================="
+=========================================
+
+. 
+. di as text _newline "1. BALANCE:"
+
+1. BALANCE:
+
+. di as text "   - See balance_table.rtf for detailed results"
+   - See balance_table.rtf for detailed results
+
+. di as text "   - Visual distributions saved to $figs/balance_dist_*.png"
+   - Visual distributions saved to C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/out/figs/balance_dist_*.png
+
+. 
+. di as text _newline "2. PARALLEL TRENDS (Visual):"
+
+2. PARALLEL TRENDS (Visual):
+
+. di as text "   - Employment: $figs/parallel_trends_employment_visual.png"
+   - Employment: C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/out/figs/parallel_trends_employment_visual.png
+
+. di as text "   - Unemployment: $figs/parallel_trends_unemployment_visual.png"
+   - Unemployment: C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/out/figs/parallel_trends_unemployment_visual.png
+
+. 
+. di as text _newline "3. PARALLEL TRENDS (Formal Tests):"
+
+3. PARALLEL TRENDS (Formal Tests):
+
+. di as text "   - Employment F-test p-value:   " %8.4f pval_emp
+   - Employment F-test p-value:     0.3663
+
+. di as text "   - Unemployment F-test p-value: " %8.4f pval_unemp
+   - Unemployment F-test p-value:   0.9215
+
+. if pval_emp > 0.05 & pval_unemp > 0.05 {
+.     di as result "   ✓ PASS: Cannot reject parallel trends for either outcome"
+   ✓ PASS: Cannot reject parallel trends for either outcome
+. }
+
+. else {
+.     di as error "   ✗ WARNING: Parallel trends assumption may be violated"
+. }
+
+. 
+. di as text _newline "4. PLACEBO TEST:"
+
+4. PLACEBO TEST:
+
+. di as text "   - Employment placebo p-value:   " %8.4f `p_placebo_emp'
+   - Employment placebo p-value:     0.1866
+
+. di as text "   - Unemployment placebo p-value: " %8.4f `p_placebo_unemp'
+   - Unemployment placebo p-value:   0.9179
+
+. if `p_placebo_emp' > 0.05 & `p_placebo_unemp' > 0.05 {
+.     di as result "   ✓ PASS: No significant effects before actual treatment"
+   ✓ PASS: No significant effects before actual treatment
+. }
+
+. else {
+.     di as error "   ✗ WARNING: Significant placebo effects detected"
+. }
+
+. 
+. di as text _newline "5. HETEROGENEITY:"
+
+5. HETEROGENEITY:
+
+. di as text "   - By baseline GDP p-value:          " %8.4f `p_diff_gdp'
+   - By baseline GDP p-value:            0.0043
+
+. di as text "   - By baseline unemployment p-value: " %8.4f `p_diff_unemp'
+   - By baseline unemployment p-value:   0.0052
+
+. di as text "   - See heterogeneity_analysis.rtf for detailed results"
+   - See heterogeneity_analysis.rtf for detailed results
+
+. 
+. di as text _newline "All diagnostic outputs saved to:"
+
+All diagnostic outputs saved to:
+
+. di as text "  - Tables: $tabs/"
+  - Tables: C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/out/tables/
+
+. di as text "  - Figures: $figs/"
+  - Figures: C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/out/figs/
+
+. 
+. di as result _newline "Pre-analysis checks complete."
+
+Pre-analysis checks complete.
+
+. di as text "Review diagnostic results before proceeding to main analysis (r1_regressions_main.do)"
+Review diagnostic results before proceeding to main analysis (r1_regressions_main.do)
+
+. 
+. log close
+      name:  <unnamed>
+       log:  C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/logs/r0_pre_analysis_checks.log
+  log type:  text
+ closed on:  28 Dec 2025, 16:36:59
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------

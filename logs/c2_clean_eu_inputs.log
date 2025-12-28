@@ -1,0 +1,1056 @@
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+      name:  <unnamed>
+       log:  C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/logs/c2_clean_eu_inputs.log
+  log type:  text
+ opened on:  28 Dec 2025, 16:36:51
+
+. 
+. *===============================================================================
+. * 0. Configuration
+. *===============================================================================
+. global XWALK "$dta/crosswalk_nuts2021_2016.dta"
+
+. local f_empr "$raw/eurostat/lfst_r_lfe2emprt.xlsx"
+
+. local f_unemp "$raw/eurostat/lfst_r_lfu3rt.xlsx"
+
+. local f_gdp "$raw/eurostat/nama_10r_2gdp.xlsx"
+
+. local f_pop "$raw/eurostat/demo_r_d2jan.xlsx"
+
+. * NUTS level used in project (NUTS2 = 4 characters)
+. local code_len 4
+
+. 
+. *===============================================================================
+. * Helper Programs
+. *===============================================================================
+. *** Helper: Map NUTS codes to nuts2016 using crosswalk
+. capture program drop _to_nuts2016
+
+. program define _to_nuts2016
+  1.     syntax, NUTSVAR(name) YEARVAR(name) VALVARS(varlist) MODE(string)
+  2.     
+.     tempvar nuts_clean
+  3.     gen `nuts_clean' = upper(strtrim(`nutsvar'))
+  4.     
+.     * Check crosswalk match rate
+.     preserve
+  5.     keep `nuts_clean'
+  6.     duplicates drop
+  7.     count
+  8.     local n_all = r(N)
+  9.     
+.     rename `nuts_clean' nuts2021
+ 10.     merge m:1 nuts2021 using "$XWALK", keep(match) nogenerate
+ 11.     count
+ 12.     local n_match = r(N)
+ 13.     restore
+ 14.     
+.     * If >= 60% match, treat as NUTS2021 and map to NUTS2016
+.     if (`n_match' / max(`n_all', 1)) >= 0.60 {
+ 15.         di as result "Mapping via crosswalk (treating as NUTS2021). Match rate = " ///
+>             %6.2f (100*`n_match'/max(`n_all',1)) "%"
+ 16.         
+.         rename `nuts_clean' nuts2021
+ 17.         merge m:1 nuts2021 using "$XWALK", keep(match) nogenerate
+ 18.         
+.         * Apply weights
+.         foreach v of varlist `valvars' {
+ 19.             replace `v' = `v' * w
+ 20.         }
+ 21.         
+.         * Collapse
+.         if "`mode'" == "avg" {
+ 22.             collapse (sum) `valvars', by(nuts2016 `yearvar')
+ 23.         }
+ 24.         else if "`mode'" == "sum" {
+ 25.             collapse (sum) `valvars', by(nuts2016 `yearvar')
+ 26.         }
+ 27.         else {
+ 28.             di as error "mode() must be 'avg' or 'sum'"
+ 29.             error 198
+ 30.         }
+ 31.         
+.         drop if missing(nuts2016) | missing(`yearvar')
+ 32.         rename `yearvar' year
+ 33.         order nuts2016 year, first
+ 34.     }
+ 35.     else {
+ 36.         di as result "Skipping crosswalk (treating as already NUTS2016)."
+ 37.         rename `nuts_clean' nuts2016
+ 38.         rename `yearvar' year
+ 39.         keep nuts2016 year `valvars'
+ 40.         keep if strlen(nuts2016) == `code_len'
+ 41.     }
+ 42.     
+.     assert !missing(nuts2016) & !missing(year)
+ 43.     sort nuts2016 year, stable
+ 44. end
+
+. 
+. *** Helper: Clean Eurostat Excel with merged headers
+. capture program drop _clean_eurostat_excel
+
+. program define _clean_eurostat_excel
+  1.     syntax, FILEpath(string) STARTrow(integer) STARTyear(integer) VARname(name)
+  2.     
+.     * Import without firstrow (merged cells cause issues)
+.     import excel "`filepath'", sheet("Sheet 1") cellrange(A`startrow') clear
+  3.     
+.     * First row has the year labels, second row starts data
+.     * Column A = GEO codes, Column B = GEO labels
+.     * Column C onwards: every ODD column (C, E, G, I...) has data
+.     *                   every EVEN column (D, F, H, J...) is blank (from merged cells)
+.     
+.     * Rename first two columns
+.     rename A nuts_code
+  4.     rename B region_name
+  5.     
+.     * Get all remaining columns
+.     ds nuts_code region_name, not
+  6.     local all_cols `r(varlist)'
+  7.     
+.     * Keep only odd-positioned columns (data columns) and rename to years
+.     local year = `startyear'
+  8.     local pos = 1
+  9.     foreach col of local all_cols {
+ 10.         * Keep odd positions (1st, 3rd, 5th... = data columns)
+.         if mod(`pos', 2) == 1 {
+ 11.             capture confirm variable `col'
+ 12.             if !_rc {
+ 13.                 rename `col' y`year'
+ 14.                 destring y`year', replace force ignore(":" "b" "u" "p" "e" "bu")
+ 15.                 local year = `year' + 1
+ 16.             }
+ 17.         }
+ 18.         else {
+ 19.             * Drop even positions (blank columns from merged cells)
+.             capture drop `col'
+ 20.         }
+ 21.         local pos = `pos' + 1
+ 22.     }
+ 23.     
+.     * Drop first row (it had the year headers, now it's data)
+.     drop in 1
+ 24.     
+.     * Reshape to long
+.     reshape long y, i(nuts_code) j(year)
+ 25.     rename y `varname'
+ 26.     
+.     * Clean
+.     replace nuts_code = upper(strtrim(nuts_code))
+ 27.     
+.     * Drop metadata rows
+.     drop if missing(nuts_code) | nuts_code == "GEO (CODES)" | ///
+>             inlist(nuts_code, "EU27_2020", "EA20", "EU28", "EA19")
+ 28.     drop if missing(year)
+ 29.     drop region_name
+ 30. end
+
+. 
+. *===============================================================================
+. * 1. Clean Population (demo_r_d2jan)
+. *===============================================================================
+. di as result _newline "===== Cleaning Population Data ====="
+
+===== Cleaning Population Data =====
+
+. _clean_eurostat_excel, filepath("`f_pop'") startrow(10) startyear(2015) varname(pop)
+(22 vars, 532 obs)
+C  D  E  F  G  H  I  J  K  L  M  N  O  P  Q  R  S  T  U  V
+y2015: character : removed; replaced as long
+(29 missing values generated)
+y2016: character : removed; replaced as long
+(26 missing values generated)
+y2017: character : removed; replaced as long
+(21 missing values generated)
+y2018: character : removed; replaced as long
+(19 missing values generated)
+y2019: character : removed; replaced as long
+(21 missing values generated)
+y2020: character : removed; replaced as long
+(74 missing values generated)
+y2021: character : removed; replaced as long
+(88 missing values generated)
+y2022: character : removed; replaced as long
+(87 missing values generated)
+y2023: character : removed; replaced as long
+(83 missing values generated)
+y2024: character : removed; replaced as long
+(91 missing values generated)
+(1 observation deleted)
+(j = 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024)
+
+Data                               Wide   ->   Long
+-----------------------------------------------------------------------------
+Number of observations              531   ->   5,310       
+Number of variables                  12   ->   4           
+j variable (10 values)                    ->   year
+xij variables:
+                  y2015 y2016 ... y2024   ->   y
+-----------------------------------------------------------------------------
+(80 real changes made)
+(30 observations deleted)
+(0 observations deleted)
+
+. 
+. * Keep only NUTS2 level
+. keep if strlen(nuts_code) == `code_len'
+(1,770 observations deleted)
+
+. 
+. * Filter to reasonable years
+. keep if year <= 2023
+(351 observations deleted)
+
+. 
+. * Convert to NUTS2016
+. _to_nuts2016, nutsvar(nuts_code) yearvar(year) valvars(pop) mode(sum)
+
+Duplicates in terms of all variables
+
+(2,808 observations deleted)
+  351
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                             0
+    Matched                               328  
+    -----------------------------------------
+  328
+Mapping via crosswalk (treating as NUTS2021). Match rate =  93.45%
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                             0
+    Matched                             2,952  
+    -----------------------------------------
+(0 real changes made)
+(0 observations deleted)
+  (all newnames==oldnames)
+
+. 
+. capture isid nuts2016 year
+
+. if _rc {
+.     collapse (sum) pop, by(nuts2016 year)
+. }
+
+. 
+. assert pop >= 0 if !missing(pop)
+
+. compress
+  variable pop was double now long
+  (11,808 bytes saved)
+
+. save "$dta/clean_population.dta", replace
+file C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/dta/clean_population.dta saved
+
+. di as result "Saved: $dta/clean_population.dta"
+Saved: C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/dta/clean_population.dta
+
+. 
+. *===============================================================================
+. * 2. Clean GDP (nama_10r_2gdp)
+. *===============================================================================
+. di as result _newline "===== Cleaning GDP Data ====="
+
+===== Cleaning GDP Data =====
+
+. _clean_eurostat_excel, filepath("`f_gdp'") startrow(8) startyear(2015) varname(gdp)
+(22 vars, 479 obs)
+C  D  E  F  G  H  I  J  K  L  M  N  O  P  Q  R  S  T  U  V
+y2015: character : removed; replaced as double
+(12 missing values generated)
+y2016: character : removed; replaced as double
+(12 missing values generated)
+y2017: character : removed; replaced as double
+(12 missing values generated)
+y2018: character : removed; replaced as double
+(12 missing values generated)
+y2019: character : removed; replaced as double
+(12 missing values generated)
+y2020: character : removed; replaced as double
+(12 missing values generated)
+y2021: character : removed; replaced as double
+(12 missing values generated)
+y2022: all characters numeric; replaced as double
+(7 missing values generated)
+y2023: character : removed; replaced as double
+(32 missing values generated)
+y2024: character : removed; replaced as double
+(32 missing values generated)
+(1 observation deleted)
+(j = 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024)
+
+Data                               Wide   ->   Long
+-----------------------------------------------------------------------------
+Number of observations              478   ->   4,780       
+Number of variables                  12   ->   4           
+j variable (10 values)                    ->   year
+xij variables:
+                  y2015 y2016 ... y2024   ->   y
+-----------------------------------------------------------------------------
+(50 real changes made)
+(20 observations deleted)
+(0 observations deleted)
+
+. 
+. * Keep only NUTS2 level
+. keep if strlen(nuts_code) == `code_len'
+(1,670 observations deleted)
+
+. 
+. * Filter to reasonable years
+. keep if year <= 2023
+(309 observations deleted)
+
+. 
+. * Convert to NUTS2016
+. _to_nuts2016, nutsvar(nuts_code) yearvar(year) valvars(gdp) mode(sum)
+
+Duplicates in terms of all variables
+
+(2,472 observations deleted)
+  309
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                             0
+    Matched                               295  
+    -----------------------------------------
+  295
+Mapping via crosswalk (treating as NUTS2021). Match rate =  95.47%
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                             0
+    Matched                             2,655  
+    -----------------------------------------
+(0 real changes made)
+(0 observations deleted)
+  (all newnames==oldnames)
+
+. 
+. capture isid nuts2016 year
+
+. if _rc {
+.     collapse (sum) gdp, by(nuts2016 year)
+. }
+
+. 
+. assert gdp >= 0 if !missing(gdp)
+
+. compress
+  (0 bytes saved)
+
+. save "$dta/clean_gdp.dta", replace
+file C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/dta/clean_gdp.dta saved
+
+. di as result "Saved: $dta/clean_gdp.dta"
+Saved: C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/dta/clean_gdp.dta
+
+. 
+. *===============================================================================
+. * 3. Clean Employment Rate (lfst_r_lfe2emprt)
+. *===============================================================================
+. di as result _newline "===== Cleaning Employment Rate Data ====="
+
+===== Cleaning Employment Rate Data =====
+
+. _clean_eurostat_excel, filepath("`f_empr'") startrow(10) startyear(2015) varname(emprate)
+(22 vars, 524 obs)
+C  D  E  F  G  H  I  J  K  L  M  N  O  P  Q  R  S  T  U  V
+y2015: character : removed; replaced as double
+(40 missing values generated)
+y2016: character : removed; replaced as double
+(36 missing values generated)
+y2017: character : removed; replaced as double
+(36 missing values generated)
+y2018: character : removed; replaced as double
+(36 missing values generated)
+y2019: character : removed; replaced as double
+(34 missing values generated)
+y2020: character : removed; replaced as double
+(93 missing values generated)
+y2021: character : removed; replaced as double
+(92 missing values generated)
+y2022: character : removed; replaced as double
+(91 missing values generated)
+y2023: character : removed; replaced as double
+(91 missing values generated)
+y2024: character : removed; replaced as double
+(91 missing values generated)
+(1 observation deleted)
+(j = 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024)
+
+Data                               Wide   ->   Long
+-----------------------------------------------------------------------------
+Number of observations              523   ->   5,230       
+Number of variables                  12   ->   4           
+j variable (10 values)                    ->   year
+xij variables:
+                  y2015 y2016 ... y2024   ->   y
+-----------------------------------------------------------------------------
+(90 real changes made)
+(30 observations deleted)
+(0 observations deleted)
+
+. 
+. * Keep only NUTS2 level
+. keep if strlen(nuts_code) == `code_len'
+(1,690 observations deleted)
+
+. 
+. * Filter to reasonable years
+. keep if year <= 2023
+(351 observations deleted)
+
+. 
+. * Standardize to percentage (0-100) for non-missing values
+. quietly summ emprate if !missing(emprate), meanonly
+
+. if r(N) > 0 & r(max) <= 1.5 {
+.     replace emprate = 100 * emprate
+. }
+
+. 
+. * Validate ranges for non-missing values
+. assert emprate >= 0 & emprate <= 100 if !missing(emprate)
+
+. 
+. * Convert to NUTS2016
+. _to_nuts2016, nutsvar(nuts_code) yearvar(year) valvars(emprate) mode(avg)
+
+Duplicates in terms of all variables
+
+(2,808 observations deleted)
+  351
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                             0
+    Matched                               324  
+    -----------------------------------------
+  324
+Mapping via crosswalk (treating as NUTS2021). Match rate =  92.31%
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                             0
+    Matched                             2,916  
+    -----------------------------------------
+(0 real changes made)
+(0 observations deleted)
+  (all newnames==oldnames)
+
+. 
+. capture isid nuts2016 year
+
+. if _rc {
+.     collapse (mean) emprate, by(nuts2016 year)
+. }
+
+. 
+. compress
+  (0 bytes saved)
+
+. save "$dta/clean_employment_rate.dta", replace
+file C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/dta/clean_employment_rate.dta saved
+
+. di as result "Saved: $dta/clean_employment_rate.dta"
+Saved: C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/dta/clean_employment_rate.dta
+
+. 
+. *===============================================================================
+. * 4. Clean Unemployment Rate (lfst_r_lfu3rt)
+. *===============================================================================
+. di as result _newline "===== Cleaning Unemployment Rate Data ====="
+
+===== Cleaning Unemployment Rate Data =====
+
+. _clean_eurostat_excel, filepath("`f_unemp'") startrow(11) startyear(2014) varname(unemprate)
+(22 vars, 517 obs)
+C  D  E  F  G  H  I  J  K  L  M  N  O  P  Q  R  S  T  U  V
+y2014: character : removed; replaced as double
+(34 missing values generated)
+y2015: character : removed; replaced as double
+(34 missing values generated)
+y2016: character : removed; replaced as double
+(35 missing values generated)
+y2017: character : removed; replaced as double
+(44 missing values generated)
+y2018: character : removed; replaced as double
+(52 missing values generated)
+y2019: character : removed; replaced as double
+(56 missing values generated)
+y2020: character : removed; replaced as double
+(144 missing values generated)
+y2021: character : removed; replaced as double
+(132 missing values generated)
+y2022: character : removed; replaced as double
+(141 missing values generated)
+y2023: character : removed; replaced as double
+(143 missing values generated)
+(1 observation deleted)
+(j = 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023)
+
+Data                               Wide   ->   Long
+-----------------------------------------------------------------------------
+Number of observations              516   ->   5,160       
+Number of variables                  12   ->   4           
+j variable (10 values)                    ->   year
+xij variables:
+                  y2014 y2015 ... y2023   ->   y
+-----------------------------------------------------------------------------
+(90 real changes made)
+(30 observations deleted)
+(0 observations deleted)
+
+. 
+. * Keep only NUTS2 level
+. keep if strlen(nuts_code) == `code_len'
+(1,690 observations deleted)
+
+. 
+. * Filter to reasonable years
+. keep if year <= 2023
+(0 observations deleted)
+
+. 
+. * Standardize to percentage (0-100) for non-missing values
+. quietly summ unemprate if !missing(unemprate), meanonly
+
+. if r(N) > 0 & r(max) <= 1.5 {
+.     replace unemprate = 100 * unemprate
+. }
+
+. 
+. * Validate ranges for non-missing values
+. assert unemprate >= 0 & unemprate <= 100 if !missing(unemprate)
+
+. 
+. * Convert to NUTS2016
+. _to_nuts2016, nutsvar(nuts_code) yearvar(year) valvars(unemprate) mode(avg)
+
+Duplicates in terms of all variables
+
+(3,096 observations deleted)
+  344
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                             0
+    Matched                               324  
+    -----------------------------------------
+  324
+Mapping via crosswalk (treating as NUTS2021). Match rate =  94.19%
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                             0
+    Matched                             3,240  
+    -----------------------------------------
+(0 real changes made)
+(0 observations deleted)
+  (all newnames==oldnames)
+
+. 
+. * Collapse if needed
+. capture isid nuts2016 year
+
+. if _rc {
+.     collapse (mean) unemprate, by(nuts2016 year)
+. }
+
+. 
+. * Report missingness
+. count if missing(unemprate)
+  0
+
+. di as text "Observations with missing unemployment rate: `r(N)' (`=string(100*r(N)/_N, "%4.1f")'%)"
+Observations with missing unemployment rate: 0 (0.0%)
+
+. count if !missing(unemprate)
+  3,240
+
+. di as text "Observations with unemployment rate: `r(N)' (`=string(100*r(N)/_N, "%4.1f")'%)"
+Observations with unemployment rate: 3240 (100.0%)
+
+. 
+. compress
+  (0 bytes saved)
+
+. save "$dta/clean_unemployment_rate.dta", replace
+file C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/dta/clean_unemployment_rate.dta saved
+
+. di as result "Saved: $dta/clean_unemployment_rate.dta"
+Saved: C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/dta/clean_unemployment_rate.dta
+
+. 
+. *===============================================================================
+. * 5. Clean ESF Payments (esf_payments.csv)
+. *===============================================================================
+. di as result _newline "===== Cleaning ESF Payments Data ====="
+
+===== Cleaning ESF Payments Data =====
+
+. import delimited "C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility\data\raw\dg_regio\esf_payments.csv.csv", clear varnames(1) encoding("UTF-8")
+(12 vars, 41,340 obs)
+
+. 
+. * Standardize variable names
+. gen nuts_code = upper(strtrim(nuts2_id))  
+
+. rename year year_temp
+
+. gen year = real(string(year_temp))
+
+. drop year_temp
+
+. gen esf_pay_raw = real(string(eu_payment_annual))
+
+. 
+. * Filter to ESF only 
+. gen fund_std = upper(strtrim(fund))
+
+. keep if fund_std == "ESF" | strpos(fund_std, "EUROPEAN SOCIAL FUND") > 0
+(33,270 observations deleted)
+
+. drop fund_std
+
+. 
+. * Drop missing observations
+. drop if missing(nuts_code) | missing(year) | missing(esf_pay_raw)
+(0 observations deleted)
+
+. 
+. * Keep NUTS2 level (4 characters)
+. keep if strlen(nuts_code) == 4
+(0 observations deleted)
+
+. 
+. * Handle payment values
+. gen esf_pay = esf_pay_raw
+
+. replace esf_pay = 0 if esf_pay_raw == 0  // Zeros are real (no payment)
+(0 real changes made)
+
+. replace esf_pay = . if esf_pay < 0        // Negatives become missing
+(4 real changes made, 4 to missing)
+
+. drop esf_pay_raw
+
+. 
+. * Keep only necessary variables
+. keep nuts_code year esf_pay
+
+. 
+. * Collapse to unique nuts_code-year 
+. collapse (sum) esf_pay, by(nuts_code year)
+
+. 
+. * Convert to NUTS2016 classification
+. _to_nuts2016, nutsvar(nuts_code) yearvar(year) valvars(esf_pay) mode(sum)
+
+Duplicates in terms of all variables
+
+(5,859 observations deleted)
+  284
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                             0
+    Matched                               233  
+    -----------------------------------------
+  233
+Mapping via crosswalk (treating as NUTS2021). Match rate =  82.04%
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                             0
+    Matched                             5,150  
+    -----------------------------------------
+(0 real changes made)
+(0 observations deleted)
+  (all newnames==oldnames)
+
+. 
+. * Verify uniqueness
+. isid nuts2016 year
+
+. 
+. * Summary statistics
+. di as result _newline "=== FINAL ESF DATA SUMMARY ==="
+
+=== FINAL ESF DATA SUMMARY ===
+
+. unique nuts2016
+Number of unique values of nuts2016 is  233
+Number of records is  5150
+
+. di as text "Unique NUTS2 regions: `r(unique)'"
+Unique NUTS2 regions: 233
+
+. quietly summarize year
+
+. di as text "Year range: `r(min)' to `r(max)'"
+Year range: 1999 to 2022
+
+. summ esf_pay, detail
+
+                        (sum) esf_pay
+-------------------------------------------------------------
+      Percentiles      Smallest
+ 1%            0              0
+ 5%        74447              0
+10%      1768393              0       Obs               5,150
+25%      6757758              0       Sum of wgt.       5,150
+
+50%     1.68e+07                      Mean           3.39e+07
+                        Largest       Std. dev.      5.00e+07
+75%     4.08e+07       5.36e+08
+90%     8.59e+07       5.49e+08       Variance       2.50e+15
+95%     1.18e+08       5.85e+08       Skewness       4.306758
+99%     2.30e+08       7.35e+08       Kurtosis       33.50258
+
+. count if esf_pay == 0
+  238
+
+. di as text "Zero payments: `r(N)' (`=string(100*r(N)/_N, "%4.1f")'%)"
+Zero payments: 238 (4.6%)
+
+. count if esf_pay > 0
+  4,912
+
+. di as text "Positive payments: `r(N)' (`=string(100*r(N)/_N, "%4.1f")'%)"
+Positive payments: 4912 (95.4%)
+
+. 
+. compress
+  variable year was float now int
+  variable esf_pay was double now long
+  (30,900 bytes saved)
+
+. save "$dta/clean_esf_payments.dta", replace
+file C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/dta/clean_esf_payments.dta saved
+
+. di as result "Saved: $dta/clean_esf_payments.dta"
+Saved: C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/dta/clean_esf_payments.dta
+
+. 
+. *===============================================================================
+. * 6. Create Base Merged Panel
+. *===============================================================================
+. di as result _newline "===== Building Base Merged Panel ====="
+
+===== Building Base Merged Panel =====
+
+. 
+. * Start with population
+. use "$dta/clean_population.dta", clear
+
+. di as text "Starting with population: `=_N' observations"
+Starting with population: 2952 observations
+
+. 
+. * Merge GDP
+. merge 1:1 nuts2016 year using "$dta/clean_gdp.dta"
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                           585
+        from master                       441  (_merge==1)
+        from using                        144  (_merge==2)
+
+    Matched                             2,511  (_merge==3)
+    -----------------------------------------
+
+. tab _merge
+
+   Matching result from |
+                  merge |      Freq.     Percent        Cum.
+------------------------+-----------------------------------
+        Master only (1) |        441       14.24       14.24
+         Using only (2) |        144        4.65       18.90
+            Matched (3) |      2,511       81.10      100.00
+------------------------+-----------------------------------
+                  Total |      3,096      100.00
+
+. drop if _merge == 2  // Drop GDP-only observations
+(144 observations deleted)
+
+. gen has_gdp = (_merge == 3)
+
+. drop _merge
+
+. 
+. * Merge employment rate
+. merge 1:1 nuts2016 year using "$dta/clean_employment_rate.dta"
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                            36
+        from master                        36  (_merge==1)
+        from using                          0  (_merge==2)
+
+    Matched                             2,916  (_merge==3)
+    -----------------------------------------
+
+. tab _merge
+
+   Matching result from |
+                  merge |      Freq.     Percent        Cum.
+------------------------+-----------------------------------
+        Master only (1) |         36        1.22        1.22
+            Matched (3) |      2,916       98.78      100.00
+------------------------+-----------------------------------
+                  Total |      2,952      100.00
+
+. drop if _merge == 2  // Drop employment-only observations
+(0 observations deleted)
+
+. gen has_emp = (_merge == 3)
+
+. drop _merge
+
+. 
+. * Merge unemployment rate
+. merge 1:1 nuts2016 year using "$dta/clean_unemployment_rate.dta"
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                           360
+        from master                        36  (_merge==1)
+        from using                        324  (_merge==2)
+
+    Matched                             2,916  (_merge==3)
+    -----------------------------------------
+
+. tab _merge
+
+   Matching result from |
+                  merge |      Freq.     Percent        Cum.
+------------------------+-----------------------------------
+        Master only (1) |         36        1.10        1.10
+         Using only (2) |        324        9.89       10.99
+            Matched (3) |      2,916       89.01      100.00
+------------------------+-----------------------------------
+                  Total |      3,276      100.00
+
+. drop if _merge == 2  // Drop unemployment-only observations
+(324 observations deleted)
+
+. gen has_unemp = (_merge == 3)
+
+. drop _merge
+
+. 
+. * Merge ESF payments
+. merge 1:1 nuts2016 year using "$dta/clean_esf_payments.dta"
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                         4,524
+        from master                     1,163  (_merge==1)
+        from using                      3,361  (_merge==2)
+
+    Matched                             1,789  (_merge==3)
+    -----------------------------------------
+
+. tab _merge
+
+   Matching result from |
+                  merge |      Freq.     Percent        Cum.
+------------------------+-----------------------------------
+        Master only (1) |      1,163       18.42       18.42
+         Using only (2) |      3,361       53.24       71.66
+            Matched (3) |      1,789       28.34      100.00
+------------------------+-----------------------------------
+                  Total |      6,313      100.00
+
+. gen has_esf = (_merge == 3)
+
+. * Keep observations from master or matched (ESF can be missing/zero for some years)
+. drop if _merge == 2
+(3,361 observations deleted)
+
+. drop _merge
+
+. 
+. * CRITICAL: Filter to EU member states only
+. * Keep only regions from EU countries (exclude Albania, etc.)
+. gen country = substr(nuts2016, 1, 2)
+
+. local eu_countries "AT BE BG CY CZ DE DK EE ES FI FR GR HR HU IE IT LT LU LV MT NL PL PT RO SE SI SK"
+
+. gen byte is_eu = 0
+
+. foreach cc of local eu_countries {
+  2.     replace is_eu = 1 if country == "`cc'"
+  3. }
+(81 real changes made)
+(99 real changes made)
+(54 real changes made)
+(9 real changes made)
+(72 real changes made)
+(342 real changes made)
+(45 real changes made)
+(9 real changes made)
+(171 real changes made)
+(45 real changes made)
+(243 real changes made)
+(0 real changes made)
+(9 real changes made)
+(72 real changes made)
+(27 real changes made)
+(189 real changes made)
+(18 real changes made)
+(9 real changes made)
+(9 real changes made)
+(9 real changes made)
+(108 real changes made)
+(153 real changes made)
+(63 real changes made)
+(72 real changes made)
+(72 real changes made)
+(18 real changes made)
+(36 real changes made)
+
+. keep if is_eu == 1
+(918 observations deleted)
+
+. drop is_eu country
+
+. 
+. * CRITICAL: Filter to years with actual data (not projections)
+. * Keep only years where we have outcomes OR ESF data
+. keep if has_emp == 1 | has_unemp == 1 | has_esf == 1
+(0 observations deleted)
+
+. 
+. * Report data availability
+. di as result _newline "=== DATA AVAILABILITY ==="
+
+=== DATA AVAILABILITY ===
+
+. count if has_gdp == 1
+  1,989
+
+. di as text "Observations with GDP: `r(N)'"
+Observations with GDP: 1989
+
+. count if has_emp == 1
+  2,034
+
+. di as text "Observations with employment: `r(N)'"
+Observations with employment: 2034
+
+. count if has_unemp == 1
+  2,034
+
+. di as text "Observations with unemployment: `r(N)'"
+Observations with unemployment: 2034
+
+. count if has_esf == 1
+  1,475
+
+. di as text "Observations with ESF > 0: `r(N)'"
+Observations with ESF > 0: 1475
+
+. 
+. * Create per-capita measure
+. gen esf_pc = esf_pay / pop if pop > 0
+(559 missing values generated)
+
+. replace esf_pc = 0 if esf_pay == 0 & pop > 0  // Explicit zeros
+(0 real changes made)
+
+. 
+. * Label variables
+. label var nuts2016 "NUTS 2016 region code"
+
+. label var year "Year"
+
+. label var pop "Population"
+
+. label var gdp "GDP (million EUR)"
+
+. label var emprate "Employment rate (%)"
+
+. label var unemprate "Unemployment rate (%)"
+
+. label var esf_pay "ESF payments (EUR)"
+
+. label var esf_pc "ESF payments per capita (EUR/person)"
+
+. label var has_gdp "=1 if GDP available"
+
+. label var has_emp "=1 if employment rate available"
+
+. label var has_unemp "=1 if unemployment rate available"
+
+. label var has_esf "=1 if ESF payment > 0"
+
+. 
+. * Drop the availability flags (or keep for diagnostics)
+. drop has_gdp has_emp has_unemp has_esf
+
+. 
+. compress
+  (0 bytes saved)
+
+. sort nuts2016 year, stable
+
+. save "$dta/panel_base_inputs.dta", replace
+file C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/dta/panel_base_inputs.dta saved
+
+. save "$tmp/panel_base_inputs_tmp.dta", replace
+file C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/dta/tmp/panel_base_inputs_tmp.dta saved
+
+. di as result "Saved: $dta/panel_base_inputs.dta"
+Saved: C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/dta/panel_base_inputs.dta
+
+. 
+. *===============================================================================
+. * Summary
+. *===============================================================================
+. di as result _newline "===== Data Cleaning Summary ====="
+
+===== Data Cleaning Summary =====
+
+. di as text "Base panel created with `=_N' observations"
+Base panel created with 2034 observations
+
+. unique nuts2016
+Number of unique values of nuts2016 is  226
+Number of records is  2034
+
+. di as text "Number of EU NUTS2 regions: `r(unique)'"
+Number of EU NUTS2 regions: 226
+
+. summ year
+
+    Variable |        Obs        Mean    Std. dev.       Min        Max
+-------------+---------------------------------------------------------
+        year |      2,034        2019    2.582624       2015       2023
+
+. di as text "Year range: `r(min)' to `r(max)'"
+Year range: 2015 to 2023
+
+. 
+. * Check completeness
+. count if !missing(emprate, unemprate, gdp, esf_pay)
+  1,435
+
+. di as text "Complete observations (all vars): `r(N)'"
+Complete observations (all vars): 1435
+
+. 
+. log close
+      name:  <unnamed>
+       log:  C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/logs/c2_clean_eu_inputs.log
+  log type:  text
+ closed on:  28 Dec 2025, 16:36:53
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------

@@ -1,0 +1,753 @@
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+      name:  <unnamed>
+       log:  C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/logs/r1_regressions_main.log
+  log type:  text
+ opened on:  28 Dec 2025, 16:36:59
+
+. 
+. *===============================================================================
+. * 0. Install Required Packages
+. *===============================================================================
+. cap which reghdfe
+
+. if _rc ssc install reghdfe, replace
+
+. 
+. cap which esttab
+
+. if _rc ssc install estout, replace
+
+. 
+. cap which coefplot
+
+. if _rc ssc install coefplot, replace
+
+. 
+. cap which eststo
+
+. if _rc ssc install estout, replace
+
+. 
+. *===============================================================================
+. * 1. Load and Validate Analysis Panel
+. *===============================================================================
+. use "$dta/panel_analysis.dta", clear
+
+. 
+. * Verify required variables
+. local required_vars nuts2016 year emprate unemprate treated post ln_esf_pc ///
+>                     ln_esf_pc_post ln_gdp_pc rel_year sample_main
+
+. 
+. foreach v of local required_vars {
+  2.     cap confirm variable `v'
+  3.     if _rc {
+  4.         di as error "Required variable '`v'' not found in panel_analysis.dta."
+  5.         di as error "Run c3_construct_treatment_eventtime.do first."
+  6.         error 111
+  7.     }
+  8. }
+
+. 
+. * Create country identifier from NUTS code
+. gen str2 country = substr(nuts2016, 1, 2)
+
+. label var country "Country (ISO2 from NUTS)"
+
+. 
+. * Country-by-year fixed effects group
+. egen long cy = group(country year)
+
+. label var cy "Country-by-year FE group"
+
+. 
+. * Restrict to analysis sample
+. keep if sample_main == 1
+(45 observations deleted)
+
+. 
+. * Validate panel structure
+. assert strlen(nuts2016) == 4
+
+. assert year == floor(year)
+
+. 
+. di as result "Analysis panel loaded: `=_N' observations"
+Analysis panel loaded: 1629 observations
+
+. unique nuts2016
+Number of unique values of nuts2016 is  181
+Number of records is  1629
+
+. di as text "Number of regions: `r(unique)'"
+Number of regions: 181
+
+. unique year
+Number of unique values of year is  9
+Number of records is  1629
+
+. di as text "Number of years: `r(unique)'"
+Number of years: 9
+
+. 
+. *===============================================================================
+. * 2. Event-Study Dummy Construction
+. *===============================================================================
+. * Event-study window (should match c3 configuration)
+. local L   = 5   // leads (periods before treatment)
+
+. local K   = 5   // lags (periods after treatment)
+
+. local ref = -1  // reference period to omit
+
+. 
+. * Define event-study sample
+. * Option A: Treated regions with defined event time only
+. gen byte es_sample = (treated == 1 & !missing(rel_year))
+
+. label var es_sample "Event-study sample (treated w/ defined event)"
+
+. 
+. * Option B: Include never-treated as control (uncomment if preferred)
+. * gen byte es_sample = (!missing(rel_year) | treated == 0)
+. * label var es_sample "Event-study sample (treated + never-treated)"
+. 
+. count if es_sample == 1
+  1,611
+
+. di as result "Event-study sample size: `r(N)' observations"
+Event-study sample size: 1611 observations
+
+. 
+. * Build event-time dummies (safe variable names)
+. * Format: Dm5, Dm4, ..., Dm2, D0, Dp1, ..., Dp5 (omitting Dm1 as reference)
+. local es_dummies ""
+
+. 
+. forvalues j = -`L'/`K' {
+  2.     * Skip reference period
+.     if `j' == `ref' continue
+  3.     
+.     * Create variable name
+.     if `j' < 0 {
+  4.         local nm = "Dm" + string(abs(`j'))
+  5.     }
+  6.     else if `j' == 0 {
+  7.         local nm = "D0"
+  8.     }
+  9.     else {
+ 10.         local nm = "Dp" + string(`j')
+ 11.     }
+ 12.     
+.     * Drop if exists from previous run
+.     cap drop `nm'
+ 13.     
+.     * Create dummy
+.     gen byte `nm' = (rel_year == `j') if es_sample == 1
+ 14.     label var `nm' "Event-time dummy: t = `j'"
+ 15.     
+.     * Add to list
+.     local es_dummies "`es_dummies' `nm'"
+ 16. }
+(18 missing values generated)
+(18 missing values generated)
+(18 missing values generated)
+(18 missing values generated)
+(18 missing values generated)
+(18 missing values generated)
+(18 missing values generated)
+(18 missing values generated)
+(18 missing values generated)
+(18 missing values generated)
+
+. 
+. * Verify all dummies were created
+. di as text "Event-study dummies created:"
+Event-study dummies created:
+
+. di as text "`es_dummies'"
+ Dm5 Dm4 Dm3 Dm2 D0 Dp1 Dp2 Dp3 Dp4 Dp5
+
+. 
+. foreach v of local es_dummies {
+  2.     cap confirm variable `v'
+  3.     if _rc {
+  4.         di as error "Event-study dummy `v' was not created successfully."
+  5.         error 111
+  6.     }
+  7. }
+
+. 
+. *===============================================================================
+. * 3. Run Regressions
+. *===============================================================================
+. eststo clear
+
+. 
+. di as result _newline "===== Running Regressions ====="
+
+===== Running Regressions =====
+
+. 
+. *** A) Binary DiD (Treated x Post)
+. di as text _newline "A) Binary DiD specifications..."
+
+A) Binary DiD specifications...
+
+. 
+. gen byte treated_post = treated * post if !missing(treated, post)
+(18 missing values generated)
+
+. label var treated_post "Treated × Post"
+
+. 
+. * Check variation in key variables
+. tab treated_post, missing
+
+  Treated × |
+       Post |      Freq.     Percent        Cum.
+------------+-----------------------------------
+          0 |        341       20.93       20.93
+          1 |      1,270       77.96       98.90
+          . |         18        1.10      100.00
+------------+-----------------------------------
+      Total |      1,629      100.00
+
+. count if treated_post == 1
+  1,270
+
+. di as text "Treated×Post = 1: `r(N)' observations"
+Treated×Post = 1: 1270 observations
+
+. 
+. * Employment rate
+. di as text "Running: Employment rate (binary DiD)..."
+Running: Employment rate (binary DiD)...
+
+. capture noisily reghdfe emprate treated_post ln_gdp_pc, ///
+>     absorb(nuts2016 cy) vce(cluster nuts2016)
+(dropped 63 singleton observations)
+(MWFE estimator converged in 2 iterations)
+
+HDFE Linear regression                            Number of obs   =      1,548
+Absorbing 2 HDFE groups                           F(   2,    171) =       3.85
+Statistics robust to heteroskedasticity           Prob > F        =     0.0232
+                                                  R-squared       =     0.9876
+                                                  Adj R-squared   =     0.9844
+                                                  Within R-sq.    =     0.0119
+Number of clusters (nuts2016) =        172        Root MSE        =     2.0274
+
+                             (Std. err. adjusted for 172 clusters in nuts2016)
+------------------------------------------------------------------------------
+             |               Robust
+     emprate | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+treated_post |   .5662451   .2779293     2.04   0.043      .017631    1.114859
+   ln_gdp_pc |   7.516717   3.815546     1.97   0.050    -.0149188    15.04835
+       _cons |   61.52401   13.89414     4.43   0.000     34.09789    88.95013
+------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+-----------------------------------------------------+
+ Absorbed FE | Categories  - Redundant  = Num. Coefs |
+-------------+---------------------------------------|
+    nuts2016 |       172         172           0    *|
+          cy |       144           1         143     |
+-----------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. if _rc {
+.     di as error "ERROR in binary DiD (employment). Return code: `=_rc'"
+.     error _rc
+. }
+
+. eststo did_emp
+
+. di as result "Binary DiD (employment rate): coef = " %6.3f _b[treated_post]
+Binary DiD (employment rate): coef =  0.566
+
+. 
+. * Unemployment rate
+. di as text "Running: Unemployment rate (binary DiD)..."
+Running: Unemployment rate (binary DiD)...
+
+. capture noisily reghdfe unemprate treated_post ln_gdp_pc, ///
+>     absorb(nuts2016 cy) vce(cluster nuts2016)
+(dropped 63 singleton observations)
+(MWFE estimator converged in 2 iterations)
+
+HDFE Linear regression                            Number of obs   =      1,548
+Absorbing 2 HDFE groups                           F(   2,    171) =       3.43
+Statistics robust to heteroskedasticity           Prob > F        =     0.0346
+                                                  R-squared       =     0.9600
+                                                  Adj R-squared   =     0.9497
+                                                  Within R-sq.    =     0.0064
+Number of clusters (nuts2016) =        172        Root MSE        =     2.3580
+
+                             (Std. err. adjusted for 172 clusters in nuts2016)
+------------------------------------------------------------------------------
+             |               Robust
+   unemprate | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+treated_post |   .9124872   .4008568     2.28   0.024     .1212224    1.703752
+   ln_gdp_pc |  -1.424199   3.246336    -0.44   0.661    -7.832252    4.983854
+       _cons |   6.302765   11.72361     0.54   0.592    -16.83886    29.44439
+------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+-----------------------------------------------------+
+ Absorbed FE | Categories  - Redundant  = Num. Coefs |
+-------------+---------------------------------------|
+    nuts2016 |       172         172           0    *|
+          cy |       144           1         143     |
+-----------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. if _rc {
+.     di as error "ERROR in binary DiD (unemployment). Return code: `=_rc'"
+.     error _rc
+. }
+
+. eststo did_unemp
+
+. di as result "Binary DiD (unemployment rate): coef = " %6.3f _b[treated_post]
+Binary DiD (unemployment rate): coef =  0.912
+
+. 
+. *** B) Continuous Intensity DiD
+. di as text _newline "B) Continuous intensity DiD specifications..."
+
+B) Continuous intensity DiD specifications...
+
+. 
+. * Check ln_esf_pc_post has variation
+. summ ln_esf_pc_post
+
+    Variable |        Obs        Mean    Std. dev.       Min        Max
+-------------+---------------------------------------------------------
+ln_esf_pc_~t |      1,431    2.186972    1.509098          0   6.219761
+
+. count if !missing(ln_esf_pc_post) & ln_esf_pc_post > 0
+  1,086
+
+. di as text "Non-zero ln_esf_pc_post: `r(N)' observations"
+Non-zero ln_esf_pc_post: 1086 observations
+
+. 
+. * Employment rate
+. di as text "Running: Employment rate (continuous DiD)..."
+Running: Employment rate (continuous DiD)...
+
+. capture noisily reghdfe emprate ln_esf_pc_post ln_gdp_pc, ///
+>     absorb(nuts2016 cy) vce(cluster nuts2016)
+(dropped 56 singleton observations)
+(MWFE estimator converged in 3 iterations)
+
+HDFE Linear regression                            Number of obs   =      1,375
+Absorbing 2 HDFE groups                           F(   2,    171) =       3.16
+Statistics robust to heteroskedasticity           Prob > F        =     0.0451
+                                                  R-squared       =     0.9882
+                                                  Adj R-squared   =     0.9849
+                                                  Within R-sq.    =     0.0131
+Number of clusters (nuts2016) =        172        Root MSE        =     1.9660
+
+                               (Std. err. adjusted for 172 clusters in nuts2016)
+--------------------------------------------------------------------------------
+               |               Robust
+       emprate | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+---------------+----------------------------------------------------------------
+ln_esf_pc_post |   .1613502   .0879122     1.84   0.068    -.0121826     .334883
+     ln_gdp_pc |   8.196162   3.951066     2.07   0.040     .3970181    15.99531
+         _cons |   64.02408   14.44939     4.43   0.000     35.50194    92.54622
+--------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+-----------------------------------------------------+
+ Absorbed FE | Categories  - Redundant  = Num. Coefs |
+-------------+---------------------------------------|
+    nuts2016 |       172         172           0    *|
+          cy |       128           1         127     |
+-----------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. if _rc {
+.     di as error "ERROR in continuous DiD (employment). Return code: `=_rc'"
+.     error _rc
+. }
+
+. eststo didc_emp
+
+. di as result "Continuous DiD (employment rate): coef = " %6.3f _b[ln_esf_pc_post]
+Continuous DiD (employment rate): coef =  0.161
+
+. 
+. * Unemployment rate
+. di as text "Running: Unemployment rate (continuous DiD)..."
+Running: Unemployment rate (continuous DiD)...
+
+. capture noisily reghdfe unemprate ln_esf_pc_post ln_gdp_pc, ///
+>     absorb(nuts2016 cy) vce(cluster nuts2016)
+(dropped 56 singleton observations)
+(MWFE estimator converged in 3 iterations)
+
+HDFE Linear regression                            Number of obs   =      1,375
+Absorbing 2 HDFE groups                           F(   2,    171) =       0.35
+Statistics robust to heteroskedasticity           Prob > F        =     0.7062
+                                                  R-squared       =     0.9634
+                                                  Adj R-squared   =     0.9531
+                                                  Within R-sq.    =     0.0010
+Number of clusters (nuts2016) =        172        Root MSE        =     2.3163
+
+                               (Std. err. adjusted for 172 clusters in nuts2016)
+--------------------------------------------------------------------------------
+               |               Robust
+     unemprate | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+---------------+----------------------------------------------------------------
+ln_esf_pc_post |   .0785045   .1655428     0.47   0.636    -.2482661    .4052751
+     ln_gdp_pc |  -2.092634   3.636352    -0.58   0.566    -9.270552    5.085284
+         _cons |   4.673849   13.26649     0.35   0.725    -21.51333    30.86103
+--------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+-----------------------------------------------------+
+ Absorbed FE | Categories  - Redundant  = Num. Coefs |
+-------------+---------------------------------------|
+    nuts2016 |       172         172           0    *|
+          cy |       128           1         127     |
+-----------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. if _rc {
+.     di as error "ERROR in continuous DiD (unemployment). Return code: `=_rc'"
+.     error _rc
+. }
+
+. eststo didc_unemp
+
+. di as result "Continuous DiD (unemployment rate): coef = " %6.3f _b[ln_esf_pc_post]
+Continuous DiD (unemployment rate): coef =  0.079
+
+. 
+. *** C) Event-Study
+. di as text _newline "C) Event-study specifications..."
+
+C) Event-study specifications...
+
+. 
+. * Check event-study sample
+. count if es_sample == 1
+  1,611
+
+. if r(N) == 0 {
+.     di as error "ERROR: es_sample has 0 observations!"
+.     error 2000
+. }
+
+. di as text "Event-study sample: `r(N)' observations"
+Event-study sample: 1611 observations
+
+. 
+. * Employment rate (event-study sample)
+. di as text "Running: Employment rate (event-study)..."
+Running: Employment rate (event-study)...
+
+. preserve
+
+. keep if es_sample == 1
+(18 observations deleted)
+
+. capture noisily reghdfe emprate `es_dummies' ln_gdp_pc, ///
+>     absorb(nuts2016 cy) vce(cluster nuts2016)
+(dropped 63 singleton observations)
+(MWFE estimator converged in 2 iterations)
+
+HDFE Linear regression                            Number of obs   =      1,548
+Absorbing 2 HDFE groups                           F(  11,    171) =       1.87
+Statistics robust to heteroskedasticity           Prob > F        =     0.0467
+                                                  R-squared       =     0.9877
+                                                  Adj R-squared   =     0.9844
+                                                  Within R-sq.    =     0.0196
+Number of clusters (nuts2016) =        172        Root MSE        =     2.0269
+
+                             (Std. err. adjusted for 172 clusters in nuts2016)
+------------------------------------------------------------------------------
+             |               Robust
+     emprate | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+         Dm5 |  -1.293985   .7017786    -1.84   0.067    -2.679249    .0912801
+         Dm4 |  -.9545553    .596377    -1.60   0.111    -2.131764    .2226535
+         Dm3 |  -.8483273   .4024138    -2.11   0.036    -1.642666    -.053989
+         Dm2 |  -.2886978   .2747373    -1.05   0.295    -.8310112    .2536155
+          D0 |   .1842081   .2125476     0.87   0.387    -.2353469    .6037631
+         Dp1 |   .4933743   .2657782     1.86   0.065    -.0312544    1.018003
+         Dp2 |   .4201167   .3128713     1.34   0.181    -.1974705    1.037704
+         Dp3 |  -.1713691    .355638    -0.48   0.631    -.8733751    .5306368
+         Dp4 |  -.0432015   .3832196    -0.11   0.910    -.7996515    .7132486
+         Dp5 |   .1127289   .3288338     0.34   0.732    -.5363673    .7618251
+   ln_gdp_pc |    7.26805   3.869769     1.88   0.062    -.3706177    14.90672
+       _cons |   61.02669   14.07784     4.33   0.000     33.23796    88.81542
+------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+-----------------------------------------------------+
+ Absorbed FE | Categories  - Redundant  = Num. Coefs |
+-------------+---------------------------------------|
+    nuts2016 |       172         172           0    *|
+          cy |       144           1         143     |
+-----------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. if _rc {
+.     di as error "ERROR in event-study (employment). Return code: `=_rc'"
+.     restore
+.     error _rc
+. }
+
+. eststo es_emp
+
+. di as result "Event-study (employment rate) completed"
+Event-study (employment rate) completed
+
+. restore
+
+. 
+. * Unemployment rate (event-study sample)
+. di as text "Running: Unemployment rate (event-study)..."
+Running: Unemployment rate (event-study)...
+
+. preserve
+
+. keep if es_sample == 1
+(18 observations deleted)
+
+. capture noisily reghdfe unemprate `es_dummies' ln_gdp_pc, ///
+>     absorb(nuts2016 cy) vce(cluster nuts2016)
+(dropped 63 singleton observations)
+(MWFE estimator converged in 2 iterations)
+
+HDFE Linear regression                            Number of obs   =      1,548
+Absorbing 2 HDFE groups                           F(  11,    171) =       1.15
+Statistics robust to heteroskedasticity           Prob > F        =     0.3260
+                                                  R-squared       =     0.9603
+                                                  Adj R-squared   =     0.9498
+                                                  Within R-sq.    =     0.0151
+Number of clusters (nuts2016) =        172        Root MSE        =     2.3563
+
+                             (Std. err. adjusted for 172 clusters in nuts2016)
+------------------------------------------------------------------------------
+             |               Robust
+   unemprate | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+         Dm5 |  -.9276951   .9632357    -0.96   0.337    -2.829059    .9736685
+         Dm4 |    .287768   1.185022     0.24   0.808    -2.051386    2.626922
+         Dm3 |  -.1246103   .7780674    -0.16   0.873    -1.660464    1.411243
+         Dm2 |  -.4185337   .4008053    -1.04   0.298    -1.209697    .3726296
+          D0 |   .3688568   .3280769     1.12   0.262    -.2787452    1.016459
+         Dp1 |   .5350752   .3299246     1.62   0.107    -.1161743    1.186325
+         Dp2 |   1.023946   .4318167     2.37   0.019     .1715684    1.876324
+         Dp3 |   1.008328   .3920019     2.57   0.011     .2345421    1.782114
+         Dp4 |   .9483431   .4529356     2.09   0.038     .0542782    1.842408
+         Dp5 |   .5537093   .3556537     1.56   0.121    -.1483276    1.255746
+   ln_gdp_pc |  -.8723209   3.160546    -0.28   0.783    -7.111029    5.366387
+       _cons |   8.584734   11.47923     0.75   0.456     -14.0745    31.24397
+------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+-----------------------------------------------------+
+ Absorbed FE | Categories  - Redundant  = Num. Coefs |
+-------------+---------------------------------------|
+    nuts2016 |       172         172           0    *|
+          cy |       144           1         143     |
+-----------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. if _rc {
+.     di as error "ERROR in event-study (unemployment). Return code: `=_rc'"
+.     restore
+.     error _rc
+. }
+
+. eststo es_unemp
+
+. di as result "Event-study (unemployment rate) completed"
+Event-study (unemployment rate) completed
+
+. restore
+
+. 
+. *===============================================================================
+. * 4. Export Tables
+. *===============================================================================
+. di as result _newline "===== Exporting Tables ====="
+
+===== Exporting Tables =====
+
+. 
+. *** DiD Results Table
+. esttab did_emp did_unemp didc_emp didc_unemp ///
+>     using "$tabs/table_did_main.rtf", replace ///
+>     title("Main DiD Results") ///
+>     mtitles("Emp Rate" "Unemp Rate" "Emp Rate" "Unemp Rate") ///
+>     se star(* 0.10 ** 0.05 *** 0.01) ///
+>     b(%9.3f) se(%9.3f) ///
+>     stats(N r2_a, fmt(%9.0fc %9.3f) labels("Observations" "Adj. R²")) ///
+>     keep(treated_post ln_esf_pc_post ln_gdp_pc) ///
+>     order(treated_post ln_esf_pc_post ln_gdp_pc) ///
+>     addnotes("All models include NUTS2 region FE and country-by-year FE." ///
+>              "Standard errors clustered by region in parentheses." ///
+>              "*** p<0.01, ** p<0.05, * p<0.1")
+(output written to C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/out/tables/table_did_main.rtf)
+
+. 
+. esttab did_emp did_unemp didc_emp didc_unemp ///
+>     using "$tabs/table_did_main.csv", replace ///
+>     se star(* 0.10 ** 0.05 *** 0.01) ///
+>     b(%9.3f) se(%9.3f) ///
+>     keep(treated_post ln_esf_pc_post ln_gdp_pc)
+(output written to C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/out/tables/table_did_main.csv)
+
+. 
+. di as result "Saved: $tabs/table_did_main.rtf"
+Saved: C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/out/tables/table_did_main.rtf
+
+. di as result "Saved: $tabs/table_did_main.csv"
+Saved: C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/out/tables/table_did_main.csv
+
+. 
+. *** Event-Study Results Table
+. esttab es_emp es_unemp ///
+>     using "$tabs/table_eventstudy_main.rtf", replace ///
+>     title("Event-Study Results (Treated Regions)") ///
+>     mtitles("Emp Rate" "Unemp Rate") ///
+>     se star(* 0.10 ** 0.05 *** 0.01) ///
+>     b(%9.3f) se(%9.3f) ///
+>     stats(N r2_a, fmt(%9.0fc %9.3f) labels("Observations" "Adj. R²")) ///
+>     keep(`es_dummies' ln_gdp_pc) ///
+>     order(`es_dummies' ln_gdp_pc) ///
+>     addnotes("Event time = 0 is first year ESF intensity exceeds (1+δ)×baseline mean." ///
+>              "Reference period t = -1 omitted." ///
+>              "All models include NUTS2 region FE and country-by-year FE." ///
+>              "Standard errors clustered by region in parentheses." ///
+>              "*** p<0.01, ** p<0.05, * p<0.1")
+(output written to C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/out/tables/table_eventstudy_main.rtf)
+
+. 
+. di as result "Saved: $tabs/table_eventstudy_main.rtf"
+Saved: C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/out/tables/table_eventstudy_main.rtf
+
+. 
+. *===============================================================================
+. * 5. Event-Study Figures
+. *===============================================================================
+. di as result _newline "===== Creating Event-Study Figures ====="
+
+===== Creating Event-Study Figures =====
+
+. 
+. *** Employment Rate Event-Study
+. estimates restore es_emp
+(results es_emp are active now)
+
+. 
+. * Create coefficient labels (skip reference period)
+. local coeflabels ""
+
+. forvalues j = `L'(-1)1 {
+  2.     if `j' == abs(`ref') continue
+  3.     local coeflabels `"`coeflabels' Dm`j' = "-`j'""'
+  4. }
+
+. local coeflabels `"`coeflabels' D0 = "0""'
+
+. forvalues j = 1/`K' {
+  2.     local coeflabels `"`coeflabels' Dp`j' = "+`j'""'
+  3. }
+
+. 
+. coefplot, ///
+>     keep(`es_dummies') ///
+>     vertical ///
+>     yline(0, lcolor(red) lpattern(dash)) ///
+>     title("Event-Study: Employment Rate", size(medium)) ///
+>     subtitle("Treated Regions Only", size(small)) ///
+>     xtitle("Years Relative to ESF Jump", size(small)) ///
+>     ytitle("Coefficient (percentage points)", size(small)) ///
+>     xlabel(, angle(0) labsize(small)) ///
+>     ylabel(, labsize(small)) ///
+>     coeflabels(`coeflabels') ///
+>     graphregion(color(white)) ///
+>     ciopts(recast(rcap) lcolor(navy))
+
+. 
+. graph export "$figs/eventstudy_employment_rate.png", replace width(2400)
+file C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/out/figs/eventstudy_employment_rate.png saved as PNG format
+
+. di as result "Saved: $figs/eventstudy_employment_rate.png"
+Saved: C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/out/figs/eventstudy_employment_rate.png
+
+. 
+. *** Unemployment Rate Event-Study
+. estimates restore es_unemp
+(results es_unemp are active now)
+
+. 
+. coefplot, ///
+>     keep(`es_dummies') ///
+>     vertical ///
+>     yline(0, lcolor(red) lpattern(dash)) ///
+>     title("Event-Study: Unemployment Rate", size(medium)) ///
+>     subtitle("Treated Regions Only", size(small)) ///
+>     xtitle("Years Relative to ESF Jump", size(small)) ///
+>     ytitle("Coefficient (percentage points)", size(small)) ///
+>     xlabel(, angle(0) labsize(small)) ///
+>     ylabel(, labsize(small)) ///
+>     coeflabels(`coeflabels') ///
+>     graphregion(color(white)) ///
+>     ciopts(recast(rcap) lcolor(navy))
+
+. 
+. graph export "$figs/eventstudy_unemployment_rate.png", replace width(2400)
+file C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/out/figs/eventstudy_unemployment_rate.png saved as PNG format
+
+. di as result "Saved: $figs/eventstudy_unemployment_rate.png"
+Saved: C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/out/figs/eventstudy_unemployment_rate.png
+
+. 
+. *===============================================================================
+. * 6. Summary
+. *===============================================================================
+. di as result _newline "===== Regression Analysis Complete ====="
+
+===== Regression Analysis Complete =====
+
+. di as text "Tables saved to: $tabs/"
+Tables saved to: C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/out/tables/
+
+. di as text "  - table_did_main.rtf"
+  - table_did_main.rtf
+
+. di as text "  - table_did_main.csv"
+  - table_did_main.csv
+
+. di as text "  - table_eventstudy_main.rtf"
+  - table_eventstudy_main.rtf
+
+. di as text ""
+
+
+. di as text "Figures saved to: $figs/"
+Figures saved to: C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/out/figs/
+
+. di as text "  - eventstudy_employment_rate.png"
+  - eventstudy_employment_rate.png
+
+. di as text "  - eventstudy_unemployment_rate.png"
+  - eventstudy_unemployment_rate.png
+
+. 
+. log close
+      name:  <unnamed>
+       log:  C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/logs/r1_regressions_main.log
+  log type:  text
+ closed on:  28 Dec 2025, 16:37:01
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------

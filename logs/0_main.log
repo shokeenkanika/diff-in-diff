@@ -1,0 +1,34 @@
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+      name:  <unnamed>
+       log:  C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/logs/0_main.log
+  log type:  text
+ opened on:  28 Dec 2025, 16:35:35
+
+. 
+. ********************************************************************************
+. ***3) Create output directories
+. cap mkdir "$project/out"
+
+. cap mkdir "$project/out/figs"
+
+. cap mkdir "$project/out/tables"
+
+. 
+. ********************************************************************************
+. ***4) Run pipeline steps
+. 
+. do "$do/c1_crosswalk_nuts2016_2021.do"
+
+. /****************************************************************************************
+> File: do/c1_crosswalk_nuts2016_2021.do
+> Purpose: Build reproducible crosswalk between NUTS 2016 and NUTS 2021 (Eurostat)
+> Strategy: Harmonize everything to NUTS 2016 as analysis vintage
+> Inputs:  $data/raw/crosswalk/nuts2021_nuts2016.xlsx (sheet: "Changes detailed NUTS 2016-2021")
+> Outputs: $dta/crosswalk_nuts2016_2021.dta (forward map: 2016 → 2021)
+>          $dta/crosswalk_nuts2021_2016.dta (reverse map: 2021 → 2016)
+> ****************************************************************************************/
+. 
+. *===============================================================================
+. * Setup
+. *===============================================================================
+. capture log close _all

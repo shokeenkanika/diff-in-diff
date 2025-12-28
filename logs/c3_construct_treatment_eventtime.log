@@ -1,0 +1,661 @@
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+      name:  <unnamed>
+       log:  C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/logs/c3_construct_treatment_eventtime.log
+  log type:  text
+ opened on:  28 Dec 2025, 16:36:53
+
+. 
+. *===============================================================================
+. * 0. Configuration
+. *===============================================================================
+. * Baseline window (used to define "treated" intensity groups and baseline ESF level)
+. * Leave missing to auto-detect first 5 years of data
+. local base_start = .
+
+. local base_end   = .
+
+. 
+. * Event definition: first year ESF per-capita rises at least (1+delta)*baseline_mean
+. local delta = 0.25
+
+. 
+. * Event-study window for leads/lags dummies
+. local L = 5     // number of leads (periods before treatment)
+
+. local K = 5     // number of lags (periods after treatment)
+
+. 
+. * Reference period to omit in event-study (usually -1)
+. local ref = -1
+
+. 
+. *===============================================================================
+. * 1. Load and Validate Base Panel
+. *===============================================================================
+. use "$dta/panel_base_inputs.dta", clear
+
+. 
+. * Verify required variables exist
+. foreach v in nuts2016 year pop gdp emprate unemprate esf_pay esf_pc {
+  2.     capture confirm variable `v'
+  3.     if _rc {
+  4.         di as error "Required variable '`v'' not found in panel_base_inputs.dta."
+  5.         di as error "Run c2_clean_eu_inputs.do first."
+  6.         error 111
+  7.     }
+  8. }
+
+. 
+. * Basic integrity checks
+. assert strlen(nuts2016) == 4
+
+. assert year == floor(year)
+
+. 
+. sort nuts2016 year, stable
+
+. 
+. * Ensure unique panel
+. capture isid nuts2016 year
+
+. if _rc {
+.     di as text "Panel not unique; collapsing by (nuts2016 year)."
+.     collapse (sum) pop gdp esf_pay ///
+>              (mean) emprate unemprate esf_pc, ///
+>              by(nuts2016 year)
+.     sort nuts2016 year, stable
+.     isid nuts2016 year
+. }
+
+. 
+. di as result "Panel loaded: `=_N' observations"
+Panel loaded: 2034 observations
+
+. 
+. *===============================================================================
+. * 2. Define Baseline Window
+. *===============================================================================
+. quietly summarize year, meanonly
+
+. local y_min = r(min)
+
+. local y_max = r(max)
+
+. 
+. * Auto-detect baseline if not specified
+. if missing(`base_start') | missing(`base_end') {
+.     local base_start = `y_min'
+.     local base_end   = min(`y_min' + 4, `y_max')
+.     di as result "Auto-detected baseline window: `base_start' to `base_end'"
+Auto-detected baseline window: 2015 to 2019
+. }
+
+. else {
+.     di as result "User-specified baseline window: `base_start' to `base_end'"
+. }
+
+. 
+. gen byte in_base = inrange(year, `base_start', `base_end')
+
+. label var in_base "=1 if year in baseline window"
+
+. 
+. *===============================================================================
+. * 3. Construct Core Exposure Variables
+. *===============================================================================
+. * Log-transformed ESF per capita
+. gen ln_esf_pc = ln(1 + esf_pc)
+(559 missing values generated)
+
+. label var ln_esf_pc "ln(1 + ESF per-capita)"
+
+. 
+. * GDP per capita
+. gen gdp_pc = gdp / pop if pop > 0
+(45 missing values generated)
+
+. label var gdp_pc "GDP per capita"
+
+. 
+. gen ln_gdp_pc = ln(gdp_pc) if gdp_pc > 0
+(45 missing values generated)
+
+. label var ln_gdp_pc "ln(GDP per capita)"
+
+. 
+. di as result "Created exposure variables: ln_esf_pc, gdp_pc, ln_gdp_pc"
+Created exposure variables: ln_esf_pc, gdp_pc, ln_gdp_pc
+
+. 
+. *===============================================================================
+. * 4. Define Treatment Group (Regions that Experience ESF Jump)
+. *===============================================================================
+. * Calculate baseline mean ESF per capita for each region
+. bysort nuts2016: egen esf_pc_base = mean(cond(in_base == 1, esf_pc, .))
+(360 missing values generated)
+
+. label var esf_pc_base "Mean ESF per-capita in baseline window"
+
+. 
+. * Drop regions without baseline data
+. count if missing(esf_pc_base)
+  360
+
+. if r(N) > 0 {
+.     di as text "Dropping `r(N)' observations with missing baseline ESF"
+Dropping 360 observations with missing baseline ESF
+.     drop if missing(esf_pc_base)
+(360 observations deleted)
+. }
+
+. 
+. *===============================================================================
+. * 5. Define Event Year (First ESF Jump)
+. *===============================================================================
+. * Flag years where ESF exceeds threshold (for ALL regions, not just treated)
+. gen esf_jump = (esf_pc >= (1 + `delta') * esf_pc_base) ///
+>     if !missing(esf_pc, esf_pc_base)
+(199 missing values generated)
+
+. label var esf_jump "=1 if ESF pc >= (1+`delta')*baseline mean"
+
+. 
+. * First year of jump for ANY region
+. bysort nuts2016 (year): egen event_year = min(cond(esf_jump == 1, year, .))
+(18 missing values generated)
+
+. label var event_year "First year ESF intensity jump"
+
+. 
+. * Define treated group as regions that EVER experience a jump
+. bysort nuts2016: egen ever_treated = max(esf_jump)
+
+. replace ever_treated = 0 if missing(ever_treated)
+(0 real changes made)
+
+. gen byte treated = (ever_treated == 1)
+
+. label var treated "=1 if region ever experiences ESF jump"
+
+. drop ever_treated
+
+. 
+. * Event time (relative year)
+. gen rel_year = year - event_year if !missing(event_year)
+(18 missing values generated)
+
+. label var rel_year "Event time (year - event_year)"
+
+. 
+. * Summary
+. di as result "Treatment groups defined:"
+Treatment groups defined:
+
+. tab treated, missing
+
+      =1 if |
+region ever |
+experiences |
+   ESF jump |      Freq.     Percent        Cum.
+------------+-----------------------------------
+          0 |         18        1.08        1.08
+          1 |      1,656       98.92      100.00
+------------+-----------------------------------
+      Total |      1,674      100.00
+
+. count if !missing(event_year)
+  1,656
+
+. di as result "`r(N)' observations have defined event years"
+1656 observations have defined event years
+
+. quietly summarize event_year if !missing(event_year), detail
+
+. di as text "Event year range: `r(min)' to `r(max)'"
+Event year range: 2015 to 2020
+
+. 
+. *===============================================================================
+. * 6. Build Event-Study Lead/Lag Dummies
+. *===============================================================================
+. di as result "Creating event-study dummies from -`L' to +`K'"
+Creating event-study dummies from -5 to +5
+
+. 
+. * Drop any existing dummies from previous runs (safe names; no minus signs)
+. forvalues j = 1/`L' {
+  2.     capture drop D_m`j'
+  3.     capture drop Dm`j'
+  4. }
+
+. forvalues j = 0/`K' {
+  2.     capture drop D_p`j'
+  3.     capture drop D`j'
+  4.     capture drop Dp`j'
+  5. }
+
+. 
+. * Create lead dummies (negative values, before treatment)
+. forvalues j = `L'(-1)1 {
+  2.     gen byte D_m`j' = (rel_year == -`j') if !missing(rel_year)
+  3.     label var D_m`j' "Event-time dummy: t = -`j'"
+  4. }
+(18 missing values generated)
+(18 missing values generated)
+(18 missing values generated)
+(18 missing values generated)
+(18 missing values generated)
+
+. 
+. * Create lag dummies (zero and positive values, at and after treatment)
+. forvalues j = 0/`K' {
+  2.     gen byte D_p`j' = (rel_year == `j') if !missing(rel_year)
+  3.     label var D_p`j' "Event-time dummy: t = +`j'"
+  4. }
+(18 missing values generated)
+(18 missing values generated)
+(18 missing values generated)
+(18 missing values generated)
+(18 missing values generated)
+(18 missing values generated)
+
+. 
+. * Handle reference period (omit from regressions)
+. if `ref' < 0 {
+.     local ref_abs = abs(`ref')
+.     capture confirm variable D_m`ref_abs'
+.     if !_rc {
+.         replace D_m`ref_abs' = .
+(1,656 real changes made, 1,656 to missing)
+.         di as text "Omitting reference period: t = `ref' (D_m`ref_abs')"
+Omitting reference period: t = -1 (D_m1)
+.     }
+. }
+
+. 
+. * ALSO set the alternative naming to missing
+. capture confirm variable Dm1
+
+. if !_rc {
+.     replace Dm1 = .
+.     di as text "Omitting reference period: Dm1"
+. }
+
+. 
+. * Alternative: create simpler naming if preferred
+. * Creates: Dm5 Dm4 ... Dm1 D0 Dp1 ... DpK (instead of invalid names like D-1)
+. forvalues j = 1/`L' {
+  2.     capture confirm variable D_m`j'
+  3.     if !_rc {
+  4.         clonevar Dm`j' = D_m`j'
+  5.         label var Dm`j' "Event-time dummy: t = -`j'"
+  6.     }
+  7. }
+(1,674 missing values generated)
+(18 missing values generated)
+(18 missing values generated)
+(18 missing values generated)
+(18 missing values generated)
+
+. 
+. capture confirm variable D_p0
+
+. if !_rc {
+.     clonevar D0 = D_p0
+(18 missing values generated)
+.     label var D0 "Event-time dummy: t = 0"
+. }
+
+. 
+. forvalues j = 1/`K' {
+  2.     capture confirm variable D_p`j'
+  3.     if !_rc {
+  4.         clonevar Dp`j' = D_p`j'
+  5.         label var Dp`j' "Event-time dummy: t = +`j'"
+  6.     }
+  7. }
+(18 missing values generated)
+(18 missing values generated)
+(18 missing values generated)
+(18 missing values generated)
+(18 missing values generated)
+
+. 
+. *===============================================================================
+. * 7. Additional DiD Indicators
+. *===============================================================================
+. * Post-treatment indicator
+. gen byte post = (year >= event_year) if !missing(event_year)
+(18 missing values generated)
+
+. label var post "=1 if year >= event_year"
+
+. 
+. * Treatment intensity x post (continuous DiD)
+. gen ln_esf_pc_post = ln_esf_pc * post if !missing(post)
+(203 missing values generated)
+
+. label var ln_esf_pc_post "ln(1+ESF pc) × Post"
+
+. 
+. *===============================================================================
+. * 8. Sample Restrictions and Final Checks
+. *===============================================================================
+. 
+. * DIAGNOSTIC: Check missingness patterns before defining sample
+. di as result _newline "=== Missingness Diagnostics ==="
+
+=== Missingness Diagnostics ===
+
+. foreach v in esf_pc ln_esf_pc emprate unemprate ln_gdp_pc event_year rel_year {
+  2.     count if missing(`v')
+  3.     di as text "`v': `r(N)' missing observations (`=string(100*r(N)/_N, "%4.1f")'%)"
+  4. }
+  199
+esf_pc: 199 missing observations (11.9%)
+  199
+ln_esf_pc: 199 missing observations (11.9%)
+  0
+emprate: 0 missing observations (0.0%)
+  0
+unemprate: 0 missing observations (0.0%)
+  45
+ln_gdp_pc: 45 missing observations (2.7%)
+  18
+event_year: 18 missing observations (1.1%)
+  18
+rel_year: 18 missing observations (1.1%)
+
+. 
+. * Show missingness by year
+. di as text _newline "ESF missingness by year:"
+
+ESF missingness by year:
+
+. tab year if missing(esf_pc), missing
+
+       Year |      Freq.     Percent        Cum.
+------------+-----------------------------------
+       2016 |          3        1.51        1.51
+       2017 |          2        1.01        2.51
+       2019 |          2        1.01        3.52
+       2020 |          2        1.01        4.52
+       2021 |          2        1.01        5.53
+       2022 |          2        1.01        6.53
+       2023 |        186       93.47      100.00
+------------+-----------------------------------
+      Total |        199      100.00
+
+. 
+. * Create multiple sample flags for different analyses
+. gen byte sample_outcomes = !missing(emprate, unemprate)
+
+. label var sample_outcomes "=1 if outcomes non-missing"
+
+. 
+. gen byte sample_controls = !missing(ln_gdp_pc)
+
+. label var sample_controls "=1 if controls non-missing"
+
+. 
+. gen byte sample_treatment = !missing(ln_esf_pc, event_year)
+
+. label var sample_treatment "=1 if treatment vars non-missing"
+
+. 
+. * Main sample requires outcomes + controls (treatment can vary by year)
+. * This allows regions with intermittent ESF payments to remain in sample
+. gen byte sample_main = (sample_outcomes == 1 & sample_controls == 1)
+
+. label var sample_main "=1 if outcomes and controls non-missing"
+
+. 
+. * Report sample sizes
+. di as result _newline "=== Sample Composition ==="
+
+=== Sample Composition ===
+
+. count if sample_outcomes == 1
+  1,674
+
+. di as text "Observations with outcomes: `r(N)'"
+Observations with outcomes: 1674
+
+. count if sample_controls == 1
+  1,629
+
+. di as text "Observations with controls: `r(N)'"
+Observations with controls: 1629
+
+. count if sample_treatment == 1
+  1,471
+
+. di as text "Observations with treatment vars: `r(N)'"
+Observations with treatment vars: 1471
+
+. count if sample_main == 1
+  1,629
+
+. di as result "Main analysis sample: `r(N)' observations"
+Main analysis sample: 1629 observations
+
+. 
+. * Show overlap of sample criteria
+. di as text _newline "Sample overlap:"
+
+Sample overlap:
+
+. tab sample_outcomes sample_controls, missing
+
+     =1 if |
+  outcomes |    =1 if controls
+non-missin |      non-missing
+         g |         0          1 |     Total
+-----------+----------------------+----------
+         1 |        45      1,629 |     1,674 
+-----------+----------------------+----------
+     Total |        45      1,629 |     1,674 
+
+. di as text _newline "Main sample by treatment availability:"
+
+Main sample by treatment availability:
+
+. tab sample_main sample_treatment, missing
+
+     =1 if |
+  outcomes |
+       and |
+  controls | =1 if treatment vars
+non-missin |      non-missing
+         g |         0          1 |     Total
+-----------+----------------------+----------
+         0 |         5         40 |        45 
+         1 |       198      1,431 |     1,629 
+-----------+----------------------+----------
+     Total |       203      1,471 |     1,674 
+
+. 
+. * Additional sample for treatment effect analyses (stricter)
+. * Only use this for regressions that require treatment intensity
+. gen byte sample_did = (sample_main == 1 & sample_treatment == 1)
+
+. label var sample_did "=1 if main sample + treatment vars present"
+
+. count if sample_did == 1
+  1,431
+
+. di as text "DiD/Event-study sample (with treatment): `r(N)' observations"
+DiD/Event-study sample (with treatment): 1431 observations
+
+. 
+. * Plausibility checks
+. assert inlist(treated, 0, 1)
+
+. assert missing(event_year) | (event_year >= `y_min' & event_year <= `y_max')
+
+. 
+. count if !missing(rel_year) & abs(rel_year) > 20
+  0
+
+. if r(N) > 0 {
+.     di as text "Warning: `r(N)' observations with |rel_year| > 20"
+. }
+
+. 
+. * Check for regions completely missing from main sample
+. preserve
+
+.     keep nuts2016 sample_main
+
+.     collapse (sum) n_obs = sample_main (count) total_obs = sample_main, by(nuts2016)
+
+.     count if n_obs == 0
+  5
+
+.     if r(N) > 0 {
+.         di as text _newline "Warning: `r(N)' regions have NO observations in main sample:"
+
+Warning: 5 regions have NO observations in main sample:
+.         list nuts2016 if n_obs == 0, clean noobs
+
+    nuts2016  
+        NL31  
+        NL33  
+        PT16  
+        PT17  
+        PT18  
+.     }
+
+. restore
+
+. 
+. *===============================================================================
+. * 9. Order Variables and Save
+. *===============================================================================
+. order nuts2016 year treated event_year rel_year post ///
+>       esf_pay esf_pc ln_esf_pc esf_pc_base esf_jump ///
+>       pop gdp gdp_pc ln_gdp_pc emprate unemprate ///
+>       sample_main in_base, first
+
+. 
+. compress
+  variable event_year was float now int
+  variable rel_year was float now byte
+  variable esf_jump was float now byte
+  (13,392 bytes saved)
+
+. sort nuts2016 year, stable
+
+. 
+. save "$dta/panel_analysis.dta", replace
+file C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/dta/panel_analysis.dta saved
+
+. save "$tmp/panel_analysis_tmp.dta", replace
+file C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/dta/tmp/panel_analysis_tmp.dta saved
+
+. 
+. di as result _newline "Treatment construction complete."
+
+Treatment construction complete.
+
+. di as text "Output saved to: $dta/panel_analysis.dta"
+Output saved to: C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/dta/panel_analysis.dta
+
+. 
+. *===============================================================================
+. * 10. Summary Statistics
+. *===============================================================================
+. di as result _newline "===== Summary Statistics ====="
+
+===== Summary Statistics =====
+
+. 
+. di as text _newline "Treatment status:"
+
+Treatment status:
+
+. tab treated
+
+      =1 if |
+region ever |
+experiences |
+   ESF jump |      Freq.     Percent        Cum.
+------------+-----------------------------------
+          0 |         18        1.08        1.08
+          1 |      1,656       98.92      100.00
+------------+-----------------------------------
+      Total |      1,674      100.00
+
+. 
+. di as text _newline "Event years (treated regions):"
+
+Event years (treated regions):
+
+. tab event_year if treated == 1, missing
+
+ First year |
+        ESF |
+  intensity |
+       jump |      Freq.     Percent        Cum.
+------------+-----------------------------------
+       2015 |        477       28.80       28.80
+       2016 |         45        2.72       31.52
+       2017 |        495       29.89       61.41
+       2018 |        486       29.35       90.76
+       2019 |        126        7.61       98.37
+       2020 |         27        1.63      100.00
+------------+-----------------------------------
+      Total |      1,656      100.00
+
+. 
+. di as text _newline "Relative year distribution:"
+
+Relative year distribution:
+
+. tab rel_year if sample_main == 1
+
+ Event time |
+    (year - |
+event_year) |      Freq.     Percent        Cum.
+------------+-----------------------------------
+         -5 |          3        0.19        0.19
+         -4 |         17        1.06        1.24
+         -3 |         70        4.35        5.59
+         -2 |        123        7.64       13.22
+         -1 |        128        7.95       21.17
+          0 |        179       11.11       32.28
+          1 |        179       11.11       43.39
+          2 |        179       11.11       54.50
+          3 |        179       11.11       65.61
+          4 |        176       10.92       76.54
+          5 |        162       10.06       86.59
+          6 |        109        6.77       93.36
+          7 |         56        3.48       96.83
+          8 |         51        3.17      100.00
+------------+-----------------------------------
+      Total |      1,611      100.00
+
+. 
+. di as text _newline "Key variables:"
+
+Key variables:
+
+. summ esf_pc esf_pc_base ln_esf_pc emprate unemprate ln_gdp_pc if sample_main == 1
+
+    Variable |        Obs        Mean    Std. dev.       Min        Max
+-------------+---------------------------------------------------------
+      esf_pc |      1,435     24.4422    33.73828          0   501.5832
+ esf_pc_base |      1,629    20.16483    26.91664    1.26126   236.2204
+   ln_esf_pc |      1,435    2.622951    1.159347          0   6.219761
+     emprate |      1,629    34.45709    15.89885          0       82.2
+   unemprate |      1,629    12.21215    10.30563          0         64
+-------------+---------------------------------------------------------
+   ln_gdp_pc |      1,629   -3.643216    .5897465  -5.547364  -2.142813
+
+. 
+. log close
+      name:  <unnamed>
+       log:  C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/logs/c3_construct_treatment_eventtime.log
+  log type:  text
+ closed on:  28 Dec 2025, 16:36:53
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------

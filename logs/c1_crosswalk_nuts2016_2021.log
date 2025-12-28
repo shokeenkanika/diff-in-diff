@@ -1,0 +1,330 @@
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+      name:  <unnamed>
+       log:  C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/logs/c1_crosswalk_nuts2016_2021.log
+  log type:  text
+ opened on:  28 Dec 2025, 16:36:51
+
+. 
+. *===============================================================================
+. * 1. Import Eurostat correspondence table
+. *===============================================================================
+. import excel "$raw/crosswalk/nuts2021_nuts2016.xlsx", ///
+>     sheet("Changes detailed NUTS 2016-2021") firstrow clear
+(18 vars, 2,149 obs)
+
+.         
+. describe, simple
+Code2016      Code2021      Country       NUTSlevel1~1  NUTSlevel2~1  NUTSlev~2016  Changecodes   Changecomm~s  NUTSlevel     Countryorder  Regiono~2016  Regiono~2021  M             N             O             P             Q             R
+
+. di as result "Available columns listed above. Proceeding with import..."
+Available columns listed above. Proceeding with import...
+
+. 
+. local v_from "Code2016"
+
+. local v_to   "Code2021"
+
+. 
+. foreach var in `v_from' `v_to' {
+  2.     capture confirm variable `var'
+  3.     if _rc {
+  4.         di as error "Required column '`var'' not found in Excel file."
+  5.         di as error "Check the column names above and adjust the script."
+  6.         error 111
+  7.     }
+  8. }
+
+. 
+. *===============================================================================
+. * 2. Clean and standardize NUTS codes
+. *===============================================================================
+. * Standardize codes
+. gen nuts2016 = upper(strtrim(`v_from'))
+(20 missing values generated)
+
+. gen nuts2021 = upper(strtrim(`v_to'))
+(28 missing values generated)
+
+. 
+. * Drop missing observations
+. drop if missing(nuts2016) | missing(nuts2021)
+(46 observations deleted)
+
+. 
+. * Optional: Keep change information for documentation
+. capture confirm variable Changecodes
+
+. if !_rc {
+.     rename Changecodes change_type
+.     label var change_type "Type of change between 2016 and 2021"
+. }
+
+. 
+. capture confirm variable Changecomments
+
+. if !_rc {
+.     rename Changecomments change_comment
+.     label var change_comment "Description of change"
+. }
+
+. 
+. * Restrict to NUTS2 level (4-character codes)
+. local nuts_level = 2
+
+. local code_len = cond(`nuts_level'==1, 3, cond(`nuts_level'==2, 4, 5))
+
+. 
+. keep if strlen(nuts2016)==`code_len' & strlen(nuts2021)==`code_len'
+(1,738 observations deleted)
+
+. 
+. di as result "Kept `=_N' region pairs at NUTS level `nuts_level'"
+Kept 365 region pairs at NUTS level 2
+
+. 
+. *===============================================================================
+. * 3. Create and normalize weights
+. *===============================================================================
+. gen w = .
+(365 missing values generated)
+
+. 
+. * Check if a weight/share column exists
+. capture confirm variable Share
+
+. if !_rc {
+.     local v_w "Share"
+. }
+
+. else {
+.     capture confirm variable SHARE
+.     if !_rc {
+.         local v_w "SHARE"
+.     }
+. }
+
+. 
+. * Use provided shares if available
+. if "`v_w'" != "" {
+.     capture confirm variable `v_w'
+.     if !_rc {
+.         gen w_raw = real(`v_w')
+.         replace w_raw = . if missing(w_raw)
+.         
+.         * Convert percentages to proportions if needed
+.         replace w = w_raw/100 if w_raw > 1 & w_raw <= 100
+.         replace w = w_raw     if w_raw >= 0 & w_raw <= 1
+.         drop w_raw
+.         
+.         di as result "Using weights from column '`v_w''"
+.     }
+. }
+
+. 
+. * Equal weights if none provided
+. bysort nuts2016: gen n_to = _N
+
+. replace w = 1/n_to if missing(w)
+(365 real changes made)
+
+. drop n_to
+
+. 
+. * We have found that this dataset has no shared column 
+. 
+. di as result "Assigned equal weights within source regions"
+Assigned equal weights within source regions
+
+. 
+. * Normalize weights to sum to 1 within each source region
+. bysort nuts2016: egen wsum = total(w)
+
+. replace w = w/wsum
+(0 real changes made)
+
+. drop wsum
+
+. 
+. *===============================================================================
+. * 4. Validation
+. *===============================================================================
+. * Check for missing values
+. assert !missing(nuts2016)
+
+. assert !missing(nuts2021)
+
+. assert !missing(w)
+
+. 
+. * Verify weights sum to 1 by source region
+. bysort nuts2016: egen chk = total(w)
+
+. count if abs(chk - 1) >= 1e-6
+  0
+
+. if r(N) > 0 {
+.     di as error "Warning: `r(N)' source regions have weights not summing to 1"
+.     list nuts2016 chk if abs(chk - 1) >= 1e-6, sepby(nuts2016)
+. }
+
+. assert abs(chk - 1) < 1e-6
+
+. drop chk
+
+. 
+. di as result "Validation passed: all weights sum to 1 within source regions"
+Validation passed: all weights sum to 1 within source regions
+
+. 
+. * Summary statistics
+. unique nuts2016
+Number of unique values of nuts2016 is  365
+Number of records is  365
+
+. local n_source = r(unique)
+
+. unique nuts2021
+Number of unique values of nuts2021 is  365
+Number of records is  365
+
+. local n_target = r(unique)
+
+. 
+. di as result "Crosswalk summary:"
+Crosswalk summary:
+
+. di as text "  - Source regions (NUTS 2016): `n_source'"
+  - Source regions (NUTS 2016): 365
+
+. di as text "  - Target regions (NUTS 2021): `n_target'"
+  - Target regions (NUTS 2021): 365
+
+. 
+. *===============================================================================
+. * 5. Save forward crosswalk (2016 → 2021)
+. *===============================================================================
+. keep nuts2016 nuts2021 w change_type change_comment
+
+. 
+. duplicates drop
+
+Duplicates in terms of all variables
+
+(0 observations are duplicates)
+
+. sort nuts2016 nuts2021, stable
+
+. 
+. label var nuts2016 "NUTS 2016 code"
+
+. label var nuts2021 "NUTS 2021 code"
+
+. label var w "Weight for mapping 2016 → 2021"
+
+. 
+. compress
+  variable w was float now byte
+  variable change_comment was str115 now str41
+  variable nuts2016 was str122 now str4
+  variable nuts2021 was str5 now str4
+  (71,540 bytes saved)
+
+. save "$dta/crosswalk_nuts2016_2021.dta", replace
+file C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/dta/crosswalk_nuts2016_2021.dta saved
+
+. di as result "Saved forward crosswalk: $dta/crosswalk_nuts2016_2021.dta"
+Saved forward crosswalk: C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/dta/crosswalk_nuts2016_2021.dta
+
+. 
+. *===============================================================================
+. * 6. Create and save reverse crosswalk (2021 → 2016)
+. *===============================================================================
+. preserve
+
+. 
+. * Swap direction
+. rename (nuts2016 nuts2021) (nuts2021 nuts2016)
+
+. 
+. * Re-normalize weights for collapsing from 2021 → 2016
+. bysort nuts2021: egen wsum2 = total(w)
+
+. replace w = w/wsum2
+(0 real changes made)
+
+. drop wsum2
+
+. 
+. * Validate reverse weights
+. bysort nuts2021: egen chk2 = total(w)
+
+. count if abs(chk2 - 1) >= 1e-6
+  0
+
+. if r(N) > 0 {
+.     di as error "Warning: `r(N)' target regions have weights not summing to 1"
+. }
+
+. assert abs(chk2 - 1) < 1e-6
+
+. drop chk2
+
+. 
+. sort nuts2021 nuts2016, stable
+
+. 
+. label var nuts2021 "NUTS 2021 code"
+
+. label var nuts2016 "NUTS 2016 code"  
+
+. label var w "Weight for collapsing 2021 → 2016"
+
+. 
+. compress
+  (0 bytes saved)
+
+. save "$dta/crosswalk_nuts2021_2016.dta", replace
+file C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/dta/crosswalk_nuts2021_2016.dta saved
+
+. di as result "Saved reverse crosswalk: $dta/crosswalk_nuts2021_2016.dta"
+Saved reverse crosswalk: C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/dta/crosswalk_nuts2021_2016.dta
+
+. 
+. restore
+
+. 
+. *===============================================================================
+. * 7. Save intermediate file
+. *===============================================================================
+. save "$tmp/crosswalk_tmp_nuts.dta", replace
+file C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/dta/tmp/crosswalk_tmp_nuts.dta saved
+
+. 
+. *===============================================================================
+. * 8. Display sample of crosswalk
+. *===============================================================================
+. di as result _newline "Sample of crosswalk (first 10 rows):"
+
+Sample of crosswalk (first 10 rows):
+
+. list nuts2016 nuts2021 w change_type in 1/10, clean noobs
+
+    nuts2016   nuts2021   w   change~e  
+        AL01       AL01   1          .  
+        AL02       AL02   1          .  
+        AL03       AL03   1          .  
+        ALZZ       ALZZ   1          .  
+        AT11       AT11   1          .  
+        AT12       AT12   1          .  
+        AT13       AT13   1          .  
+        AT21       AT21   1          .  
+        AT22       AT22   1          .  
+        AT31       AT31   1          .  
+
+. 
+. log close
+      name:  <unnamed>
+       log:  C:\Users\kanikashokeen\Downloads\Git_Reproducibility\Git_Reproducibility/logs/c1_crosswalk_nuts2016_2021.log
+  log type:  text
+ closed on:  28 Dec 2025, 16:36:51
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
