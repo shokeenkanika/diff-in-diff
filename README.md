@@ -1,4 +1,4 @@
-# diff-in-diff — Showcasing Reproducibility Best Practices and Stata Skills using a Difference in Difference/Event-Study (Using EU NUTS2)
+# Reproducibility Best Practices using a STATA DID/Event Study
 
 This repository is a reproducible, Stata-first coding sample that builds a NUTS2 region-year panel and estimates paper-style Difference-in-Differences (DiD) and event-study specifications on EU labour-market outcomes. The workflow harmonizes geography to a single **analysis vintage (NUTS 2016)** using Eurostat correspondence tables, cleans and merges EU inputs (Eurostat regional indicators + DG REGIO historic EU payments), constructs treatment/exposure and event-time indicators, and exports regression tables/figures for a concise write-up. The focus is on **clean econometric workflow, modular scripts, and reproducible outputs** rather than novelty.
 
