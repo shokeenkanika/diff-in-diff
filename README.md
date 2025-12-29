@@ -1,6 +1,6 @@
 ## Reproducibility Best Practices using a Stata DID/Event Study
 
-This repository showcases my coding best practices with a focus on reproducible, human-led approaches to coding. I ask that the reader's focus not be on the soundness of the research question, which was taken from the perspective of practice. Instead, this form of coding reflects a broader shift in econometrics research to ensure scientific inquiry can stand the test of time. As packages popularly used in Stata/R/Python are regularly updated by committed individuals, and data held in public repositories can change with subsequent versions, it becomes harder for a researcher to defend their code as more time passes. Therefore, organizations such as the World Bank's Reproducibility Initiative (RRR [1]) are building important new workflows that can easily be incorporated into a project's scripts that ensure the study is robust, defendable and reproducible across time.   
+This repository showcases my coding best practices with a focus on reproducible, human-led approaches to coding. I ask that the reader's focus not be on the soundness of the research question, which was taken from the perspective of practice. Instead, this form of coding reflects a broader shift in econometrics research to ensure scientific inquiry can stand the test of time. As packages popularly used in Stata/R/Python are regularly updated by committed individuals, and data held in public repositories can change with subsequent versions, it becomes harder for a researcher to defend their code as more time passes. Therefore, organizations such as the World Bank's Reproducibility Initiative (RRR: https://reproducibility.worldbank.org/index.php/home) are building important new workflows that can easily be incorporated into a project's scripts that ensure the study is robust, defendable and reproducible across time.   
 
 Researchers looking to submit or publish a reproducibility package for their paper, Stata coders looking to make their code easier for collaboration with colleagues or their future selves, advocates for transparency and openness in science and Stata users who have noticed their results change using the same code but have no idea why, are all examples of crucial use cases of reproducibility best practices. 
 
@@ -65,5 +65,3 @@ diff-in-diff/
 ├── logs/
 ├── LICENSE
 └── README.md
-
-[1]: https://reproducibility.worldbank.org/index.php/home
