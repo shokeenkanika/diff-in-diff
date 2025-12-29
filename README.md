@@ -4,30 +4,31 @@ This repository showcases my coding best practices with a focus on reproducible,
 
 Researchers looking to submit or publish a reproducibility package for their paper, Stata coders looking to make their code easier for collaboration with colleagues or their future selves, advocates for transparency and openness in science and Stata users who have noticed their results change using the same code but have no idea why, are all examples of crucial use cases of reproducibility best practices. 
 
-Therefore, showcasing what I learnt working as a Short-Term Consultant with the World Bank, following is a Difference-in-Differences (DiD) model with event-study specifications executed in Stata. I estimate changes in the EU labour market with the policy changes that took place in the European Social Fund between their 2014-2020 and 2021-2027 period (limiting the analysis to 2021-2023, which was the last year of data availability). The workflow harmonizes geography to a single **analysis vintage (NUTS 2016)** using Eurostat correspondence tables, cleans and merges EU inputs (Eurostat regional indicators + DG REGIO historic EU payments), constructs treatment/exposure and event-time indicators, and exports regression tables/figures into one output folder. The focus is on a **clean econometric workflow, modular scripts, and reproducible outputs** rather than novelty. 
+Therefore, showcasing what I learnt working as a Short-Term Consultant with the World Bank, following is a Difference-in-Differences (DiD) model with event-study specifications executed in Stata. I examine whether regions that received big jumps in ESF funding in 2018 saw different changes in their employment and unemployment rates compared to regions that didn't, using data from 2014 to 2023. The workflow harmonizes geography to a single **analysis vintage (NUTS 2016)** using Eurostat correspondence tables, cleans and merges EU inputs (Eurostat regional indicators + DG REGIO historic EU payments), constructs treatment/exposure and event-time indicators, and exports regression tables/figures into one output folder. The focus is on a **clean econometric workflow, modular scripts, and reproducible outputs** rather than novelty. 
 
 To recreate these results, start by cloning this repo in GitHub Desktop. It it crucial that you do not change the order of the folders. By running 0_main.do after setting the correct path to your folders in this script, you will be able to recreate my figures and tables identically. A local copy of the data sources exists in /data/raw, as downloaded by me on 12/15/2025, but please find the official sources cited below. 
 
 ---
-
 ## Research design
+- Unit: European regions (NUTS2 level) observed each year from 2014-2023.
+- Outcomes: Employment rate and unemployment rate (from Eurostat).
+- Treatment: Regions that received a large jump (≥25% increase) in ESF funding per person in 2018.
+- Identification strategy: Compare labor market changes in regions with big ESF increases in 2018 versus regions without big increases, using a difference-in-differences approach.
+- Baseline model: Regression controlling for each region's fixed characteristics and each country's year-specific trends; also controls for regional GDP per person; standard errors account for correlation within regions over time.
+- Event study: Track effects before and after 2018 (3 years before through 3 years after) to check whether trends were similar before the funding jump and how effects evolve over time.
 
-- **Unit:** NUTS2 region × year panel (harmonized to NUTS 2016 codes).
-- **Outcomes:** employment rate, unemployment rate (Eurostat).
-- **Exposure/treatment:** ESF (or cohesion) payments per capita and event-time indicators around a 2018 treatment threshold.
-- **Baseline DiD:** region fixed effects + country-by-year fixed effects; clustered standard errors at the region level.
-- **Event study:** leads/lags of treatment relative to each region’s event year, omitting a reference period (e.g., `t = -1`).
+**Research Question**: 
+Do regions that received large increases in ESF funding (≥25% per person in 2018) show different changes in employment and unemployment compared to regions that didn't receive such increases, controlling for economic development and country-specific trends?
 
 ---
 
 ## Data sources 
 
-### Eurostat (regional statistics, NUTS2)
-Download (CSV recommended) from the Eurostat Data Browser pages below (or via Eurostat bulk/API options):
-- **Employment rates by NUTS2** (`lfst_r_lfe2emprt`): https://ec.europa.eu/eurostat/databrowser/view/lfst_r_lfe2emprt__custom_16843686/default/table
-- **Unemployment rate by NUTS2** (`lfst_r_lfu3rt`): https://ec.europa.eu/eurostat/databrowser/view/lfst_r_lfu3rt/default/table
-- **GDP by NUTS2** (`nama_10r_2gdp`): https://ec.europa.eu/eurostat/databrowser/view/NAMA_10R_2GDP__custom_1707376/default/table?lang=en
-- **Population by NUTS2** (`demo_r_d2jan`): https://ec.europa.eu/eurostat/databrowser/explore/all/popul?display=list&extractionId=demo_r_d2jan&lang=en&sort=category&subtheme=demo.demopreg
+Eurostat
+- Employment rates by NUTS2 (`lfst_r_lfe2emprt`): https://ec.europa.eu/eurostat/databrowser/view/lfst_r_lfe2emprt__custom_16843686/default/table
+- Unemployment rate by NUTS2 (`lfst_r_lfu3rt`): https://ec.europa.eu/eurostat/databrowser/view/lfst_r_lfu3rt/default/table
+- GDP by NUTS2(`nama_10r_2gdp`): https://ec.europa.eu/eurostat/databrowser/view/NAMA_10R_2GDP__custom_1707376/default/table?lang=en
+- Population by NUTS2 (`demo_r_d2jan`): https://ec.europa.eu/eurostat/databrowser/explore/all/popul?display=list&extractionId=demo_r_d2jan&lang=en&sort=category&subtheme=demo.demopreg
 
 ### DG REGIO / Cohesion Policy (historic payments)
 - **Historic EU payments – regionalised and modelled** (NUTS2 annual expenditure for multiple funds, incl. ESF):
