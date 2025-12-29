@@ -7,6 +7,7 @@ Researchers looking to submit or publish a reproducibility package for their pap
 Therefore, showcasing what I learnt working as a Short-Term Consultant with the World Bank, following is a Difference-in-Differences (DiD) model with event-study specifications executed in Stata. I estimate changes in the EU labour market with the policy changes that took place in the European Social Fund between their 2014-2020 and 2021-2027 period (limiting the analysis to 2021-2023, which was the last year of data availability). The workflow harmonizes geography to a single **analysis vintage (NUTS 2016)** using Eurostat correspondence tables, cleans and merges EU inputs (Eurostat regional indicators + DG REGIO historic EU payments), constructs treatment/exposure and event-time indicators, and exports regression tables/figures into one output folder. The focus is on a **clean econometric workflow, modular scripts, and reproducible outputs** rather than novelty. 
 
 To recreate these results, please clone this repository into your own computer. It it crucial that you do not change the order of the folders. By running 0_main.do after setting the correct path to your folders in this script, you will be able to recreate my figures and tables identically. A local copy of the data sources exists in /data/raw, as downloaded by me on 12/15/2025, but please find the official sources cited below. 
+
 ---
 
 ## Research design (high level)
