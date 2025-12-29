@@ -10,12 +10,12 @@ To recreate these results, start by cloning this repo in GitHub Desktop. It it c
 
 ---
 ## Research design
-- Unit: European regions (NUTS2 level) observed each year from 2014-2023.
-- Outcomes: Employment rate and unemployment rate (from Eurostat).
-- Treatment: Regions that received a large jump (≥25% increase) in ESF funding per person in 2018.
-- Identification strategy: Compare labor market changes in regions with big ESF increases in 2018 versus regions without big increases, using a difference-in-differences approach.
-- Baseline model: Regression controlling for each region's fixed characteristics and each country's year-specific trends; also controls for regional GDP per person; standard errors account for correlation within regions over time.
-- Event study: Track effects before and after 2018 (3 years before through 3 years after) to check whether trends were similar before the funding jump and how effects evolve over time.
+- Unit: European regions (NUTS2 level) observed each year from 2014-2023
+- Outcomes: Employment rate and unemployment rate (from Eurostat)
+- Treatment: Regions that received a large jump (≥25% increase) in ESF funding per person in 2018
+- Identification strategy: Compare labor market changes in regions with big ESF increases in 2018 versus regions without big increases, using a difference-in-differences approach
+- Baseline model: Regression controlling for each region's fixed characteristics and each country's year-specific trends; also controls for regional GDP per person; standard errors account for correlation within regions over time
+- Event study: Track effects before and after 2018 (3 years before through 3 years after) to check whether trends were similar before the funding jump and how effects evolve over time
 
 **Research Question**: 
 Do regions that received large increases in ESF funding (≥25% per person in 2018) show different changes in employment and unemployment compared to regions that didn't receive such increases, controlling for economic development and country-specific trends?
