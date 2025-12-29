@@ -2,7 +2,7 @@
 File: do/c1_crosswalk_nuts2016_2021.do
 Purpose: Build reproducible crosswalk between NUTS 2016 and NUTS 2021 (Eurostat)
 Strategy: Harmonize everything to NUTS 2016 as analysis vintage
-Inputs:  $data/raw/crosswalk/nuts2021_nuts2016.xlsx (sheet: "Changes detailed NUTS 2016-2021")
+Inputs:  $data/raw/crosswalk/nuts2021_nuts2016.xlsx 
 Outputs: $dta/crosswalk_nuts2016_2021.dta (forward map: 2016 → 2021)
          $dta/crosswalk_nuts2021_2016.dta (reverse map: 2021 → 2016)
 ****************************************************************************************/
@@ -204,4 +204,5 @@ di as result _newline "Sample of crosswalk (first 10 rows):"
 list nuts2016 nuts2021 w change_type in 1/10, clean noobs
 
 log close
+
 di as result _newline "Crosswalk construction complete."
