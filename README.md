@@ -10,7 +10,7 @@ To recreate these results, start by cloning this repo in GitHub Desktop. It it c
 
 ---
 
-## Research design (high level)
+## Research design
 
 - **Unit:** NUTS2 region × year panel (harmonized to NUTS 2016 codes).
 - **Outcomes:** employment rate, unemployment rate (Eurostat).
@@ -20,7 +20,7 @@ To recreate these results, start by cloning this repo in GitHub Desktop. It it c
 
 ---
 
-## Data sources (official)
+## Data sources 
 
 ### Eurostat (regional statistics, NUTS2)
 Download (CSV recommended) from the Eurostat Data Browser pages below (or via Eurostat bulk/API options):
